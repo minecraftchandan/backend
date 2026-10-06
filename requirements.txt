@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+psycopg[binary]>=3.2,<4

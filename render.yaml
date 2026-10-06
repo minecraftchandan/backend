@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: satark-drishti-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: API_ACCESS_TOKEN
+        generateValue: true
+      - key: TRUSTED_HOSTS
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
