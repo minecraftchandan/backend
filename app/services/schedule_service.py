@@ -35,7 +35,9 @@ def get_all_schedules() -> list[ScheduleItem]:
                 s.organization_notified, s.notification_status, s.notification_error,
                 COALESCE(u.id, s.inspector_id) AS inspector_id,
                 u.designation AS inspector_designation,
-                u.official_id AS inspector_official_id
+                u.official_id AS inspector_official_id,
+                COALESCE(u.official_id_verified, FALSE) AS inspector_official_id_verified,
+                COALESCE(u.qualifications, '') AS inspector_qualifications
             FROM schedules s
             LEFT JOIN users u ON u.id = COALESCE(
                 s.inspector_id,
@@ -56,7 +58,9 @@ def get_schedule_by_id(schedule_id: str) -> ScheduleItem | None:
                 s.organization_notified, s.notification_status, s.notification_error,
                 COALESCE(u.id, s.inspector_id) AS inspector_id,
                 u.designation AS inspector_designation,
-                u.official_id AS inspector_official_id
+                u.official_id AS inspector_official_id,
+                COALESCE(u.official_id_verified, FALSE) AS inspector_official_id_verified,
+                COALESCE(u.qualifications, '') AS inspector_qualifications
             FROM schedules s
             LEFT JOIN users u ON u.id = COALESCE(
                 s.inspector_id,
@@ -98,7 +102,8 @@ def create_scheduled_inspection(payload: ScheduleCreate) -> ScheduleItem:
             raise LookupError("The selected organization is no longer registered.")
 
         inspector = connection.execute(
-            """SELECT id, name, designation, official_id
+            """SELECT id, name, designation, official_id, official_id_verified,
+                qualifications
             FROM users WHERE id = ? AND active = TRUE""",
             (payload.inspector_id,),
         ).fetchone()
@@ -106,13 +111,16 @@ def create_scheduled_inspection(payload: ScheduleCreate) -> ScheduleItem:
             raise LookupError("The selected inspector is not registered and active.")
         if not inspector["official_id"] or not inspector["official_id"].strip():
             raise ValueError(
-                "The selected inspector must have a verified official ID before scheduling."
+                "The selected inspector must have an official ID on their profile before scheduling."
             )
         if (
             os.getenv("APP_ENV", "development").strip().lower() == "production"
-            and inspector["official_id"].startswith("DEMO-")
+            and (
+                inspector["official_id"].startswith(("DEMO-", "STAGING-"))
+                or not inspector["official_id_verified"]
+            )
         ):
-            raise ValueError("Demo inspector IDs cannot be used for production schedules.")
+            raise ValueError("Production scheduling requires an officer-verified official inspector ID.")
 
         if payload.inspection_request_id is not None:
             request = connection.execute(
@@ -158,6 +166,8 @@ def create_scheduled_inspection(payload: ScheduleCreate) -> ScheduleItem:
             inspector_id=inspector["id"],
             inspector_designation=inspector["designation"],
             inspector_official_id=inspector["official_id"],
+            inspector_official_id_verified=inspector["official_id_verified"],
+            inspector_qualifications=inspector["qualifications"] or "",
             inspection_request_id=payload.inspection_request_id,
             organization_notified=False,
             notification_status="pending" if payload.notify_organization else "not_requested",
@@ -226,10 +236,16 @@ def generate_random_schedule(count: int = 3) -> list[ScheduleItem]:
                 for name, location in _DEMO_ORGANIZATIONS
             ]
         inspector_rows = connection.execute(
-            """SELECT id, name, official_id FROM users
+            """SELECT id, name, official_id, official_id_verified FROM users
             WHERE active = TRUE AND official_id IS NOT NULL AND trim(official_id) != ''
             ORDER BY id"""
         ).fetchall()
+        if os.getenv("APP_ENV", "development").strip().lower() == "production":
+            inspector_rows = [
+                row for row in inspector_rows
+                if row["official_id_verified"]
+                and not row["official_id"].startswith(("DEMO-", "STAGING-"))
+            ]
         active_inspectors = [
             (row["id"], row["name"]) for row in inspector_rows
         ]

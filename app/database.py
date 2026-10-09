@@ -73,6 +73,19 @@ _DEMO_USERS = (
     (3, "Arjun Deshmukh", "Senior Inspector", "Pune Division", "DEMO-INS-0003", "Inspection Department", "Pune Division", True),
 )
 
+_STAGING_TEST_INSPECTOR = (
+    999999,
+    "Staging Finance QA Inspector",
+    "Finance Compliance QA Inspector",
+    "Sandbox District",
+    "STAGING-TEST-NOT-OFFICIAL",
+    False,
+    "Staging QA Unit",
+    "Sandbox District",
+    "Synthetic finance and accounting review qualification; not a real credential.",
+    True,
+)
+
 DEMO_SITE_COORDINATES = {
     "Asha Bal Vikas Sanstha": {"latitude": 18.5074, "longitude": 73.8077, "radius_m": 100},
     "Sanjeevani Old Age Support Trust": {"latitude": 18.5020, "longitude": 73.9270, "radius_m": 100},
@@ -194,8 +207,10 @@ def _initialize_connection(connection: PostgresConnection) -> None:
                 designation TEXT NOT NULL,
                 region TEXT NOT NULL,
                 official_id TEXT,
+                official_id_verified BOOLEAN NOT NULL DEFAULT FALSE,
                 department_unit TEXT NOT NULL DEFAULT 'Inspection Department',
                 jurisdiction TEXT,
+                qualifications TEXT NOT NULL DEFAULT '',
                 active BOOLEAN NOT NULL DEFAULT TRUE
             );
             CREATE TABLE IF NOT EXISTS schedules (
@@ -326,8 +341,10 @@ def _initialize_connection(connection: PostgresConnection) -> None:
         connection.executescript(
             """
             ALTER TABLE users ADD COLUMN IF NOT EXISTS official_id TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS official_id_verified BOOLEAN NOT NULL DEFAULT FALSE;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS department_unit TEXT NOT NULL DEFAULT 'Inspection Department';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS jurisdiction TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS qualifications TEXT NOT NULL DEFAULT '';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
             ALTER TABLE schedules ADD COLUMN IF NOT EXISTS purpose TEXT;
             ALTER TABLE schedules ADD COLUMN IF NOT EXISTS scope TEXT;
@@ -352,6 +369,15 @@ def _initialize_connection(connection: PostgresConnection) -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             _DEMO_USERS,
         )
+        if os.getenv("APP_ENV", "development").strip().lower() == "staging":
+            connection.execute(
+                """INSERT INTO users
+                (id, name, designation, region, official_id, official_id_verified,
+                 department_unit, jurisdiction, qualifications, active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO NOTHING""",
+                _STAGING_TEST_INSPECTOR,
+            )
         seeded_organizations = [
             (
                 item["id"], item["name"], item["reg"], item["location"],

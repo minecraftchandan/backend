@@ -96,11 +96,13 @@ class ScheduleDatabase:
         request_org="org-1",
         active=True,
         official_id="DEMO-INS-0012",
+        official_id_verified=False,
     ):
         self.request_status = request_status
         self.request_org = request_org
         self.active = active
         self.official_id = official_id
+        self.official_id_verified = official_id_verified
         self.inserted = None
 
     def __enter__(self):
@@ -127,6 +129,8 @@ class ScheduleDatabase:
                 "name": "Inspector Name",
                 "designation": "Senior Inspector",
                 "official_id": self.official_id,
+                "official_id_verified": self.official_id_verified,
+                "qualifications": "Finance and accounting review",
             }
             return Result(row if params[0] == 12 and self.active else None)
         if "FROM inspection_requests" in query:
@@ -164,6 +168,8 @@ class ScheduleDatabase:
                 "inspector_id": 12,
                 "inspector_designation": "Senior Inspector",
                 "inspector_official_id": "SD-INS-0012",
+                "inspector_official_id_verified": False,
+                "inspector_qualifications": "Finance and accounting review",
             }])
         raise AssertionError(f"Unexpected schedule query: {query}")
 
@@ -192,7 +198,9 @@ class NotificationDatabase:
             "contact_email_verified": verified,
             "designation": "Senior Inspector",
             "official_id": "SD-INS-0012",
+            "qualifications": "Finance and accounting review",
         }
+        self.last_recipient = None
 
     def __enter__(self):
         return self
@@ -214,6 +222,7 @@ class NotificationDatabase:
                 attempts=self.outbox["attempts"] + 1,
                 recipient_email=params[0],
             )
+            self.last_recipient = params[0]
             return Result()
         if "SET notification_status = 'sending'" in query:
             return Result()
@@ -249,14 +258,16 @@ class UserProfileDatabase:
     def execute(self, query, params=None):
         if "UPDATE users" in query:
             self.profile = {
-                "id": params[7],
+                "id": params[9],
                 "name": params[0],
                 "designation": params[1],
                 "official_id": params[2],
-                "department_unit": params[3],
-                "jurisdiction": params[4],
-                "active": params[6],
-                "region": params[4],
+                "department_unit": params[4],
+                "official_id_verified": params[3],
+                "jurisdiction": params[5],
+                "qualifications": params[7],
+                "active": params[8],
+                "region": params[6],
             }
             return Result(rowcount=1)
         if "FROM users WHERE id" in query:
@@ -452,6 +463,11 @@ class ScheduleWorkflowTests(unittest.TestCase):
         self.assertEqual(schedule.scope, "Review records and inspect facilities")
         self.assertEqual(schedule.inspector_designation, "Senior Inspector")
         self.assertEqual(schedule.inspector_official_id, "DEMO-INS-0012")
+        self.assertFalse(schedule.inspector_official_id_verified)
+        self.assertEqual(
+            schedule.inspector_qualifications,
+            "Finance and accounting review",
+        )
         self.assertTrue(schedule.organization_notified)
         self.assertEqual(schedule.notification_status, "sent")
 
@@ -488,6 +504,67 @@ class ScheduleWorkflowTests(unittest.TestCase):
             schedule_service, "get_connection", side_effect=lambda: database_context(database)
         ), patch.dict(os.environ, {"APP_ENV": "production"}), self.assertRaises(ValueError):
             schedule_service.create_scheduled_inspection(valid_schedule())
+
+    def test_production_requires_officer_verified_real_id(self):
+        database = ScheduleDatabase(
+            official_id="FIN-INS-2041",
+            official_id_verified=False,
+        )
+        with patch.object(
+            schedule_service,
+            "get_connection",
+            side_effect=lambda: database_context(database),
+        ), patch.dict(os.environ, {"APP_ENV": "production"}), self.assertRaises(ValueError):
+            schedule_service.create_scheduled_inspection(valid_schedule())
+
+    def test_production_accepts_officer_verified_real_id(self):
+        database = ScheduleDatabase(
+            official_id="FIN-INS-2041",
+            official_id_verified=True,
+        )
+        with patch.object(
+            schedule_service,
+            "get_connection",
+            side_effect=lambda: database_context(database),
+        ), patch.object(
+            schedule_service.notification_service,
+            "deliver_schedule_notification",
+            return_value={
+                "organization_notified": False,
+                "notification_status": "failed",
+                "notification_error": "No verified organization contact email is on file.",
+            },
+        ), patch.dict(os.environ, {"APP_ENV": "production"}):
+            schedule = schedule_service.create_scheduled_inspection(
+                valid_schedule(notify_organization=True)
+            )
+        self.assertEqual(schedule.inspector_official_id, "FIN-INS-2041")
+        self.assertTrue(schedule.inspector_official_id_verified)
+
+    def test_staging_accepts_only_for_test_use_the_synthetic_profile_id(self):
+        database = ScheduleDatabase(
+            official_id="STAGING-TEST-NOT-OFFICIAL",
+            official_id_verified=False,
+        )
+        with patch.object(
+            schedule_service,
+            "get_connection",
+            side_effect=lambda: database_context(database),
+        ), patch.object(
+            schedule_service.notification_service,
+            "deliver_schedule_notification",
+            return_value={
+                "organization_notified": False,
+                "notification_status": "suppressed",
+                "notification_error": "Staging notification was suppressed.",
+            },
+        ), patch.dict(os.environ, {"APP_ENV": "staging"}):
+            schedule = schedule_service.create_scheduled_inspection(
+                valid_schedule(notify_organization=True)
+            )
+        self.assertEqual(schedule.inspector_official_id, "STAGING-TEST-NOT-OFFICIAL")
+        self.assertFalse(schedule.inspector_official_id_verified)
+        self.assertFalse(schedule.organization_notified)
 
     def test_purpose_and_scope_are_required(self):
         with self.assertRaises(ValidationError):
@@ -583,6 +660,7 @@ class NotificationWorkflowTests(unittest.TestCase):
             "contact_email": "verified@example.gov",
             "designation": "Senior Inspector",
             "official_id": "SD-INS-0012",
+            "qualifications": "Finance and accounting review",
         }
         smtp = unittest.mock.MagicMock()
         smtp.__enter__.return_value = smtp
@@ -609,6 +687,7 @@ class NotificationWorkflowTests(unittest.TestCase):
             row["inspector"],
             row["designation"],
             row["official_id"],
+            row["qualifications"],
         ):
             self.assertIn(expected, body)
 
@@ -623,6 +702,49 @@ class NotificationWorkflowTests(unittest.TestCase):
         self.assertFalse(delivered)
         self.assertIn("not configured", error)
 
+    def test_staging_notification_routes_only_to_configured_test_inbox(self):
+        database = NotificationDatabase(verified=True)
+        with patch.object(
+            notification_service,
+            "get_connection",
+            side_effect=lambda: database_context(database),
+        ), patch.object(
+            notification_service,
+            "_send_schedule_email",
+            return_value=(True, None),
+        ) as send, patch.dict(os.environ, {
+            "APP_ENV": "staging",
+            "STAGING_NOTIFICATION_TEST_INBOX": "staging-inbox@example.test",
+        }):
+            result = notification_service.deliver_schedule_notification("SCH-1")
+
+        self.assertEqual(send.call_args.kwargs["recipient"], "staging-inbox@example.test")
+        self.assertEqual(database.last_recipient, "staging-inbox@example.test")
+        self.assertFalse(result["organization_notified"])
+        self.assertEqual(result["notification_status"], "test_sent")
+        self.assertIn("organization was not notified", result["notification_error"])
+        self.assertFalse(database.schedule["SCH-1"]["organization_notified"])
+        self.assertEqual(database.outbox["status"], "test_sent")
+
+    def test_staging_without_test_inbox_suppresses_delivery(self):
+        database = NotificationDatabase(verified=True)
+        with patch.object(
+            notification_service,
+            "get_connection",
+            side_effect=lambda: database_context(database),
+        ), patch.object(notification_service, "_send_schedule_email") as send, patch.dict(
+            os.environ,
+            {"APP_ENV": "staging", "STAGING_NOTIFICATION_TEST_INBOX": ""},
+        ):
+            result = notification_service.deliver_schedule_notification("SCH-1")
+
+        send.assert_not_called()
+        self.assertIsNone(database.last_recipient)
+        self.assertFalse(result["organization_notified"])
+        self.assertEqual(result["notification_status"], "suppressed")
+        self.assertEqual(database.outbox["status"], "suppressed")
+        self.assertFalse(database.schedule["SCH-1"]["organization_notified"])
+
 
 class InspectorProfileTests(unittest.TestCase):
     def test_authority_officer_can_save_backend_managed_profile(self):
@@ -630,8 +752,10 @@ class InspectorProfileTests(unittest.TestCase):
             name=" Inspector Name ",
             designation="Senior Inspector",
             official_id="OFF-1234",
+            official_id_verified=True,
             department_unit="Inspection Unit",
             jurisdiction="Northern District",
+            qualifications="Finance audit",
             active=True,
         )
         database = UserProfileDatabase()
@@ -640,7 +764,9 @@ class InspectorProfileTests(unittest.TestCase):
         ):
             saved = user_service.update_inspector_profile(12, profile)
         self.assertEqual(saved.official_id, "OFF-1234")
+        self.assertTrue(saved.official_id_verified)
         self.assertEqual(saved.jurisdiction, "Northern District")
+        self.assertEqual(saved.qualifications, "Finance audit")
         self.assertTrue(saved.active)
         self.assertEqual(saved.name, "Inspector Name")
 

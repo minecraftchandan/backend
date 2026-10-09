@@ -62,6 +62,8 @@ class ScheduleItem(BaseModel):
     inspector_id: Optional[int] = None
     inspector_designation: Optional[str] = None
     inspector_official_id: Optional[str] = None
+    inspector_official_id_verified: bool = False
+    inspector_qualifications: str = ""
     inspection_request_id: Optional[str] = None
     organization_notified: bool = False
     notification_status: str = "not_requested"

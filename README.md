@@ -191,14 +191,23 @@ accepts it. `POST /api/schedule/{id}/notification/retry` retries a failed
 notification and also requires an Authority Officer.
 
 Inspector profiles are stored on the backend with `official_id`, name,
-designation, department/unit, jurisdiction, and active status. An Authority
-Officer manages a profile through
+`official_id_verified`, designation, department/unit, jurisdiction,
+qualifications, and active status. An Authority Officer manages a profile through
 `PUT /api/users/{user_id}/profile` with `name`, `designation`, `official_id`,
-`department_unit`, `jurisdiction`, and `active`. A schedule cannot be
-assigned to an inactive inspector or one without an official ID. Legacy
-profiles start with no official ID and must be verified and updated before
-assignment. Seeded `DEMO-INS-*` IDs are demo placeholders, not government
-identifiers; replace them with verified values before production scheduling.
+`official_id_verified`, `department_unit`, `jurisdiction`, `qualifications`,
+and `active`. Only set `official_id_verified: true` after checking the actual
+government credential. A schedule cannot be assigned to an inactive inspector
+or one without an official ID; production additionally requires the ID to be
+officer-verified and rejects demo/staging IDs. Legacy profiles start
+unverified and must be updated before production assignment.
+
+When `APP_ENV=staging`, startup inserts the active
+`Staging Finance QA Inspector` at user ID `999999` unless that ID already
+exists. Its `STAGING-TEST-NOT-OFFICIAL` identifier and finance/accounting
+qualification are synthetic QA data only; `official_id_verified` is false.
+This lets the staging frontend exercise inspector selection and schedule
+creation without representing a fictional person as a real or verified
+government officer. It must never be used in production.
 
 Organizations have a verified contact email and contact person. An Authority
 Officer can set/verify these fields using
@@ -220,6 +229,7 @@ backend service:
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | Together, if required by provider | SMTP authentication credentials. |
 | `SMTP_FROM_EMAIL` | Yes | Authorized sender address. |
 | `SMTP_USE_TLS` | No | `true` (default) uses STARTTLS; `false` disables STARTTLS. |
+| `STAGING_NOTIFICATION_TEST_INBOX` | Staging only | In `APP_ENV=staging`, send notices only to this controlled mailbox. If unset, staging notices are suppressed without contacting SMTP. |
 
 Never put SMTP credentials in source control or frontend configuration. If the
 organization lacks a verified contact, the SMTP settings are incomplete, or
@@ -229,6 +239,16 @@ notification is kept in the PostgreSQL outbox with its attempt count and last
 failure; an Authority Officer can retry it after correcting the contact or
 provider configuration. A pending or failed notification does not undo a valid
 schedule.
+
+For staging, set `APP_ENV=staging` and configure a controlled
+`STAGING_NOTIFICATION_TEST_INBOX`. The SMTP message is redirected there even
+when an organization has no verified email; a provider-accepted delivery is
+reported as `notification_status: "test_sent"` and
+`organization_notified: false`, because the organization did not receive it.
+If no test inbox is configured, staging records
+`notification_status: "suppressed"` and does not send email. Staging notices
+are not retryable as organization notices. Do not use a real organization
+mailbox as the staging test inbox.
 
 These endpoints and notifications are **not live until this backend has been
 deployed, its startup migrations have run, Authority Officer sessions are

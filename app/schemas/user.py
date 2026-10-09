@@ -14,8 +14,10 @@ class InspectorProfileUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=150)
     designation: str = Field(min_length=2, max_length=150)
     official_id: str = Field(min_length=1, max_length=80)
+    official_id_verified: bool
     department_unit: str = Field(min_length=2, max_length=150)
     jurisdiction: str = Field(min_length=2, max_length=150)
+    qualifications: str = Field(default="", max_length=1000)
     active: bool
 
     @field_validator(
@@ -24,13 +26,20 @@ class InspectorProfileUpdate(BaseModel):
         "official_id",
         "department_unit",
         "jurisdiction",
+        "qualifications",
         mode="before",
     )
     @classmethod
     def strip_profile_fields(cls, value):
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("name", "designation", "official_id", "department_unit", "jurisdiction")
+    @field_validator(
+        "name",
+        "designation",
+        "official_id",
+        "department_unit",
+        "jurisdiction",
+    )
     @classmethod
     def require_nonempty_profile_fields(cls, value: str) -> str:
         if not value:
@@ -44,6 +53,8 @@ class User(BaseModel):
     designation: str
     region: str
     official_id: Optional[str] = None
+    official_id_verified: bool = False
     department_unit: str
     jurisdiction: str
+    qualifications: str = ""
     active: bool

@@ -10,12 +10,15 @@ from app.database import get_connection
 
 
 def deliver_schedule_notification(schedule_id: str) -> dict:
+    staging = os.getenv("APP_ENV", "development").strip().lower() == "staging"
+    staging_recipient = os.getenv("STAGING_NOTIFICATION_TEST_INBOX", "").strip()
     with get_connection() as connection:
         row = connection.execute(
             """SELECT o.schedule_id, o.status AS outbox_status, s.organization,
                 s.date, s.time, s.purpose, s.scope, s.inspector,
                 org.contact_email, org.contact_person,
-                org.contact_email_verified, u.designation, u.official_id
+                org.contact_email_verified, u.designation, u.official_id,
+                u.qualifications
             FROM inspection_notification_outbox o
             JOIN schedules s ON s.id = o.schedule_id
             JOIN organizations org ON org.name = s.organization
@@ -31,6 +34,16 @@ def deliver_schedule_notification(schedule_id: str) -> dict:
                 "notification_status": "sent",
                 "notification_error": None,
             }
+        if row["outbox_status"] in {"test_sent", "suppressed"}:
+            return {
+                "organization_notified": False,
+                "notification_status": row["outbox_status"],
+                "notification_error": (
+                    "Staging notice was accepted by the test inbox; the organization was not notified."
+                    if row["outbox_status"] == "test_sent"
+                    else "Staging notification was suppressed; the organization was not notified."
+                ),
+            }
 
         claim = connection.execute(
             """UPDATE inspection_notification_outbox
@@ -41,7 +54,11 @@ def deliver_schedule_notification(schedule_id: str) -> dict:
                     OR (status = 'sending'
                         AND updated_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes'))""",
             (
-                row["contact_email"] if row["contact_email_verified"] else None,
+                (
+                    staging_recipient or None
+                    if staging
+                    else row["contact_email"] if row["contact_email_verified"] else None
+                ),
                 schedule_id,
             ),
         )
@@ -58,20 +75,33 @@ def deliver_schedule_notification(schedule_id: str) -> dict:
             (schedule_id,),
         )
 
-    if not row["contact_email_verified"] or not row["contact_email"]:
+    if staging and not staging_recipient:
+        error = "Staging notification was suppressed; the organization was not notified."
+        delivered = False
+        provider_accepted = False
+        state = "suppressed"
+    elif not staging and (not row["contact_email_verified"] or not row["contact_email"]):
         error = "No verified organization contact email is on file."
         delivered = False
+        provider_accepted = False
+        state = "failed"
     else:
-        delivered, error = _send_schedule_email(row)
+        recipient = staging_recipient if staging else row["contact_email"]
+        provider_accepted, error = _send_schedule_email(row, recipient=recipient)
+        delivered = provider_accepted and not staging
+        state = "test_sent" if staging and provider_accepted else (
+            "sent" if delivered else "failed"
+        )
+        if staging and provider_accepted:
+            error = "Staging notice accepted by the test inbox; the organization was not notified."
 
-    state = "sent" if delivered else "failed"
     with get_connection() as connection:
         connection.execute(
             """UPDATE inspection_notification_outbox
             SET status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP,
                 delivered_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE delivered_at END
             WHERE schedule_id = ?""",
-            (state, error, delivered, schedule_id),
+            (state, error, provider_accepted, schedule_id),
         )
         connection.execute(
             """UPDATE schedules
@@ -97,10 +127,14 @@ def retry_schedule_notification(schedule_id: str) -> dict:
         raise LookupError("No retryable organization notification exists for this schedule.")
     if row["status"] == "sent":
         raise ValueError("The organization notification has already been accepted by the provider.")
+    if row["status"] == "test_sent":
+        raise ValueError("The staging notice was sent to the test inbox; the organization was not notified.")
+    if row["status"] == "suppressed":
+        raise ValueError("The staging notification was intentionally suppressed.")
     return deliver_schedule_notification(schedule_id)
 
 
-def _send_schedule_email(row) -> tuple[bool, Optional[str]]:
+def _send_schedule_email(row, recipient: Optional[str] = None) -> tuple[bool, Optional[str]]:
     host = os.getenv("SMTP_HOST", "").strip()
     sender = os.getenv("SMTP_FROM_EMAIL", "").strip()
     username = os.getenv("SMTP_USERNAME", "").strip()
@@ -118,7 +152,7 @@ def _send_schedule_email(row) -> tuple[bool, Optional[str]]:
         message = EmailMessage()
         message["Subject"] = f"Inspection scheduled for {row['organization']}"
         message["From"] = sender
-        message["To"] = row["contact_email"]
+        message["To"] = recipient or row["contact_email"]
         message.set_content(
             "\n".join((
                 f"An inspection has been scheduled for {row['organization']}.",
@@ -129,6 +163,7 @@ def _send_schedule_email(row) -> tuple[bool, Optional[str]]:
                 f"Assigned inspector: {row['inspector']}",
                 f"Designation: {row['designation'] or 'Not recorded'}",
                 f"Official ID: {row['official_id'] or 'Not recorded'}",
+                f"Qualifications: {row['qualifications'] or 'Not recorded'}",
             ))
         )
         with smtplib.SMTP(host, port, timeout=15) as server:
