@@ -68,9 +68,9 @@ class PostgresConnection:
         self._connection.close()
 
 _DEMO_USERS = (
-    (1, "Ramesh Kadam", "Field Inspector", "Pune Division"),
-    (2, "Sunita Patil", "Field Inspector", "Nashik Division"),
-    (3, "Arjun Deshmukh", "Senior Inspector", "Pune Division"),
+    (1, "Ramesh Kadam", "Field Inspector", "Pune Division", "DEMO-INS-0001", "Inspection Department", "Pune Division", True),
+    (2, "Sunita Patil", "Field Inspector", "Nashik Division", "DEMO-INS-0002", "Inspection Department", "Nashik Division", True),
+    (3, "Arjun Deshmukh", "Senior Inspector", "Pune Division", "DEMO-INS-0003", "Inspection Department", "Pune Division", True),
 )
 
 DEMO_SITE_COORDINATES = {
@@ -192,7 +192,11 @@ def _initialize_connection(connection: PostgresConnection) -> None:
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 designation TEXT NOT NULL,
-                region TEXT NOT NULL
+                region TEXT NOT NULL,
+                official_id TEXT,
+                department_unit TEXT NOT NULL DEFAULT 'Inspection Department',
+                jurisdiction TEXT,
+                active BOOLEAN NOT NULL DEFAULT TRUE
             );
             CREATE TABLE IF NOT EXISTS schedules (
                 id TEXT PRIMARY KEY,
@@ -204,7 +208,14 @@ def _initialize_connection(connection: PostgresConnection) -> None:
                 status TEXT NOT NULL,
                 site_latitude REAL,
                 site_longitude REAL,
-                site_radius_m REAL
+                site_radius_m REAL,
+                purpose TEXT,
+                scope TEXT,
+                inspector_id INTEGER,
+                inspection_request_id TEXT,
+                organization_notified BOOLEAN NOT NULL DEFAULT FALSE,
+                notification_status TEXT NOT NULL DEFAULT 'not_requested',
+                notification_error TEXT
             );
             CREATE TABLE IF NOT EXISTS organizations (
                 id TEXT PRIMARY KEY,
@@ -217,7 +228,43 @@ def _initialize_connection(connection: PostgresConnection) -> None:
                 latitude REAL,
                 longitude REAL,
                 radius_m REAL,
+                contact_email TEXT,
+                contact_person TEXT,
+                contact_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS inspection_requests (
+                id TEXT PRIMARY KEY,
+                department TEXT NOT NULL,
+                requester_name TEXT NOT NULL,
+                requester_email TEXT NOT NULL,
+                requester_verified BOOLEAN NOT NULL DEFAULT FALSE,
+                organization_id TEXT NOT NULL REFERENCES organizations(id),
+                purpose TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                urgency TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                created_at TEXT NOT NULL,
+                reviewed_by TEXT,
+                reviewed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_inspection_requests_status_created
+                ON inspection_requests(status, created_at);
+            CREATE TABLE IF NOT EXISTS inspection_notification_outbox (
+                schedule_id TEXT PRIMARY KEY REFERENCES schedules(id),
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                recipient_email TEXT,
+                last_error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                delivered_at TIMESTAMPTZ
+            );
+            CREATE TABLE IF NOT EXISTS inspection_request_rate_limits (
+                bucket_key TEXT NOT NULL,
+                window_start TIMESTAMPTZ NOT NULL,
+                request_count INTEGER NOT NULL,
+                PRIMARY KEY (bucket_key, window_start)
             );
             CREATE INDEX IF NOT EXISTS idx_schedules_date ON schedules(date);
             CREATE TABLE IF NOT EXISTS inspections (
@@ -276,8 +323,33 @@ def _initialize_connection(connection: PostgresConnection) -> None:
             );
             """
         )
+        connection.executescript(
+            """
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS official_id TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS department_unit TEXT NOT NULL DEFAULT 'Inspection Department';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS jurisdiction TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS purpose TEXT;
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS scope TEXT;
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS inspector_id INTEGER;
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS inspection_request_id TEXT;
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS organization_notified BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS notification_status TEXT NOT NULL DEFAULT 'not_requested';
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS notification_error TEXT;
+            ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_email TEXT;
+            ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_person TEXT;
+            ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE inspection_requests ADD COLUMN IF NOT EXISTS requester_verified BOOLEAN NOT NULL DEFAULT FALSE;
+            UPDATE users
+            SET jurisdiction = COALESCE(jurisdiction, region)
+            WHERE jurisdiction IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_official_id ON users(official_id);
+            """
+        )
         connection.executemany(
-            "INSERT OR IGNORE INTO users (id, name, designation, region) VALUES (?, ?, ?, ?)",
+            """INSERT OR IGNORE INTO users
+            (id, name, designation, region, official_id, department_unit, jurisdiction, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             _DEMO_USERS,
         )
         seeded_organizations = [
@@ -311,6 +383,16 @@ def _initialize_connection(connection: PostgresConnection) -> None:
             site_latitude, site_longitude, site_radius_m)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             _DEMO_SCHEDULES,
+        )
+        connection.execute(
+            """UPDATE schedules
+            SET inspector_id = (
+                SELECT id FROM users
+                WHERE users.name = schedules.inspector ORDER BY id LIMIT 1
+            )
+            WHERE inspector_id IS NULL AND EXISTS (
+                SELECT 1 FROM users WHERE users.name = schedules.inspector
+            )"""
         )
         connection.executemany(
             """UPDATE schedules SET site_latitude = ?, site_longitude = ?, site_radius_m = ?

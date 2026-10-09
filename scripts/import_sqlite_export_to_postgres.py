@@ -114,6 +114,22 @@ def import_dump(database_url: str, dump_path: Path = DEFAULT_DUMP) -> int:
         with connection.transaction():
             for statement in statements[1:-1]:
                 connection.execute(statement)
+            connection.execute(
+                """UPDATE users
+                SET department_unit = COALESCE(department_unit, 'Inspection Department'),
+                    jurisdiction = COALESCE(jurisdiction, region),
+                    active = COALESCE(active, TRUE)"""
+            )
+            connection.execute(
+                """UPDATE schedules
+                SET inspector_id = (
+                    SELECT id FROM users
+                    WHERE users.name = schedules.inspector ORDER BY id LIMIT 1
+                )
+                WHERE inspector_id IS NULL AND EXISTS (
+                    SELECT 1 FROM users WHERE users.name = schedules.inspector
+                )"""
+            )
     return len(statements) - 2
 
 

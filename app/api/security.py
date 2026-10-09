@@ -83,6 +83,29 @@ def verify_user_access_token(token: str) -> dict:
     return payload
 
 
+def require_authenticated_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> dict:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A signed user session is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return verify_user_access_token(credentials.credentials)
+
+
+def require_authority_officer(
+    claims: dict = Depends(require_authenticated_user),
+) -> dict:
+    if claims["role"] != "authority":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authority Officer access is required",
+        )
+    return claims
+
+
 def _decode_segment(segment: str) -> bytes:
     return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
 

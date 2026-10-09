@@ -1,4 +1,4 @@
-"""SQLite-backed organization registry and inspection summary queries."""
+"""PostgreSQL-backed organization registry and inspection summary queries."""
 
 import re
 import uuid
@@ -84,3 +84,18 @@ def delete_organization(organization_id: str) -> bool:
             (organization_id,),
         )
     return cursor.rowcount > 0
+
+
+def set_verified_organization_contact(
+    organization_id: str,
+    contact_email: str,
+    contact_person: str,
+) -> bool:
+    with get_connection() as connection:
+        result = connection.execute(
+            """UPDATE organizations
+            SET contact_email = ?, contact_person = ?, contact_email_verified = TRUE
+            WHERE id = ?""",
+            (contact_email.strip().lower(), contact_person.strip(), organization_id),
+        )
+    return result.rowcount > 0

@@ -2,11 +2,13 @@
 
 import psycopg
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.security import require_authority_officer
 from app.schemas.organization import (
     Organization,
     OrganizationCreate,
+    OrganizationVerifiedContactUpdate,
     OrganizationVerificationUpdate,
 )
 from app.services import organization_service
@@ -51,7 +53,30 @@ def update_organization_verification(
     return organization
 
 
+@router.patch(
+    "/organizations/{organization_id}/verified-contact",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_authority_officer)],
+)
+def set_verified_organization_contact(
+    organization_id: str,
+    payload: OrganizationVerifiedContactUpdate,
+):
+    if not organization_service.set_verified_organization_contact(
+        organization_id,
+        payload.contact_email,
+        payload.contact_person,
+    ):
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+
 @router.delete("/organizations/{organization_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_organization(organization_id: str):
-    if not organization_service.delete_organization(organization_id):
-        raise HTTPException(status_code=404, detail="Organization not found")
+    try:
+        if not organization_service.delete_organization(organization_id):
+            raise HTTPException(status_code=404, detail="Organization not found")
+    except psycopg.IntegrityError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="Organization cannot be deleted while inspection requests reference it.",
+        ) from error

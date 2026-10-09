@@ -2,7 +2,7 @@
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class OrganizationCreate(BaseModel):
@@ -16,6 +16,27 @@ class OrganizationCreate(BaseModel):
 
 class OrganizationVerificationUpdate(BaseModel):
     verification: Literal["Verified", "Flagged"]
+
+
+class OrganizationVerifiedContactUpdate(BaseModel):
+    contact_email: str = Field(
+        min_length=3,
+        max_length=254,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    )
+    contact_person: str = Field(min_length=2, max_length=150)
+
+    @field_validator("contact_email", "contact_person", mode="before")
+    @classmethod
+    def strip_contact_fields(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("contact_person")
+    @classmethod
+    def require_contact_person(cls, value: str) -> str:
+        if len(value) < 2:
+            raise ValueError("Provide a valid organization contact person.")
+        return value
 
 
 class Organization(BaseModel):

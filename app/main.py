@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.inspection_requests import public_router as public_inspection_requests_router
 from app.database import initialize_database
 
 load_dotenv()  # loads variables from a local .env file, if present
@@ -71,7 +72,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -95,5 +96,6 @@ def health_check():
     return {"status": "ok"}
 
 
+app.include_router(public_inspection_requests_router, prefix="/api")
 app.include_router(api_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
