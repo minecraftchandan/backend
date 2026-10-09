@@ -541,9 +541,9 @@ class ScheduleWorkflowTests(unittest.TestCase):
         self.assertEqual(schedule.inspector_official_id, "FIN-INS-2041")
         self.assertTrue(schedule.inspector_official_id_verified)
 
-    def test_staging_accepts_only_for_test_use_the_synthetic_profile_id(self):
+    def test_staging_accepts_manual_test_profile_without_verifying_its_id(self):
         database = ScheduleDatabase(
-            official_id="STAGING-TEST-NOT-OFFICIAL",
+            official_id="STAGING-MANUAL-TEST-ID",
             official_id_verified=False,
         )
         with patch.object(
@@ -562,7 +562,7 @@ class ScheduleWorkflowTests(unittest.TestCase):
             schedule = schedule_service.create_scheduled_inspection(
                 valid_schedule(notify_organization=True)
             )
-        self.assertEqual(schedule.inspector_official_id, "STAGING-TEST-NOT-OFFICIAL")
+        self.assertEqual(schedule.inspector_official_id, "STAGING-MANUAL-TEST-ID")
         self.assertFalse(schedule.inspector_official_id_verified)
         self.assertFalse(schedule.organization_notified)
 

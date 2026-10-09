@@ -201,13 +201,12 @@ or one without an official ID; production additionally requires the ID to be
 officer-verified and rejects demo/staging IDs. Legacy profiles start
 unverified and must be updated before production assignment.
 
-When `APP_ENV=staging`, startup inserts the active
-`Staging Finance QA Inspector` at user ID `999999` unless that ID already
-exists. Its `STAGING-TEST-NOT-OFFICIAL` identifier and finance/accounting
-qualification are synthetic QA data only; `official_id_verified` is false.
-This lets the staging frontend exercise inspector selection and schedule
-creation without representing a fictional person as a real or verified
-government officer. It must never be used in production.
+Staging inspector test data is not seeded automatically. Add or update
+synthetic records in the staging database through the Authority Officer profile
+workflow; use a clearly marked test identifier and keep
+`official_id_verified: false`. Staging scheduling accepts an active profile
+with a non-empty test ID, while production continues to require an officer-
+verified official ID and rejects demo/staging-prefixed IDs.
 
 Organizations have a verified contact email and contact person. An Authority
 Officer can set/verify these fields using
