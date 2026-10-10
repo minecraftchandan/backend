@@ -35,8 +35,18 @@ def authenticate(username: str, password: str, portal_role: str) -> dict | None:
     if not hmac.compare_digest(password_hash, account["password_hash"]):
         return None
 
+    user_id = None
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE username = ?",
+            (account["username"],),
+        ).fetchone()
+        if user_row:
+            user_id = user_row["id"]
+
     return {
         "role": account["role"],
         "username": account["username"],
         "displayName": account["display_name"],
+        "userId": user_id,
     }

@@ -56,18 +56,25 @@ class RequestDatabase:
         if "DELETE FROM inspection_request_rate_limits" in query:
             return Result(rowcount=0)
         if "INSERT INTO inspection_requests" in query:
-            request_id, department, name, email, org_id, purpose, scope, urgency, created_at = params
+            (
+                request_id, department, contact, requester_name, requester_email,
+                org_id, org_display, purpose, scope, urgency,
+                proposed_scope, priority, created_at, new_org,
+            ) = params
             self.requests[request_id] = {
                 "id": request_id,
                 "department": department,
-                "requester_name": name,
-                "requester_email": email,
+                "contact": contact,
+                "requester_name": requester_name,
+                "requester_email": requester_email,
                 "requester_verified": False,
                 "organization_id": org_id,
                 "organization": self.organization["name"],
                 "purpose": purpose,
                 "scope": scope,
                 "urgency": urgency,
+                "proposed_scope": proposed_scope,
+                "priority": priority,
                 "status": "Pending",
                 "created_at": created_at,
                 "reviewed_by": None,
@@ -84,8 +91,10 @@ class RequestDatabase:
         if "FROM inspection_requests r" in query:
             if "WHERE r.id = ?" in query:
                 row = self.requests.get(params[0])
-                return Result(dict(row) if row else None)
-            return Result(rows=[dict(row) for row in self.requests.values()])
+                if row is None:
+                    return Result()
+                return Result(dict(row, new_organization_json=None))
+            return Result(rows=[dict(row, new_organization_json=None) for row in self.requests.values()])
         raise AssertionError(f"Unexpected request query: {query}")
 
 

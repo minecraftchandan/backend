@@ -27,15 +27,18 @@ def _encode_segment(value: dict) -> str:
     return base64.urlsafe_b64encode(encoded).rstrip(b"=").decode("ascii")
 
 
-def issue_user_access_token(username: str, role: str) -> tuple[str, int]:
+def issue_user_access_token(username: str, role: str, user_id: Optional[int] = None) -> tuple[str, int]:
     expires_at = int(time.time()) + USER_ACCESS_TOKEN_SECONDS
     header = _encode_segment({"alg": "HS256", "typ": "JWT"})
-    payload = _encode_segment({
+    claims: dict = {
         "sub": username,
         "role": role,
         "iat": int(time.time()),
         "exp": expires_at,
-    })
+    }
+    if user_id is not None:
+        claims["uid"] = user_id
+    payload = _encode_segment(claims)
     signing_input = f"{header}.{payload}".encode("ascii")
     signature = hmac.new(_signing_secret(), signing_input, "sha256").digest()
     encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")

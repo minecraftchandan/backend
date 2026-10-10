@@ -26,7 +26,9 @@ def login(payload: LoginRequest):
             detail="Incorrect username or password for the selected portal",
         )
 
-    access_token, expires_at = issue_user_access_token(session["username"], session["role"])
+    access_token, expires_at = issue_user_access_token(
+        session["username"], session["role"], session.get("userId")
+    )
     session["accessToken"] = access_token
     session["tokenType"] = "Bearer"
     session["expiresAt"] = expires_at * 1000

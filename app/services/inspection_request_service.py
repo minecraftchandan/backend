@@ -1,6 +1,7 @@
 """Persistence for public department requests and Authority Officer reviews."""
 
 import hashlib
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -10,18 +11,38 @@ from app.schemas.inspection_request import InspectionRequest, InspectionRequestC
 RATE_LIMIT_REQUESTS = 5
 
 
+def _row_to_request(row: dict) -> InspectionRequest:
+    data = dict(row)
+    raw = data.pop("new_organization_json", None)
+    # new_organization may be a JSON object (from previous session) or plain text
+    if raw:
+        try:
+            data["new_organization"] = json.loads(raw)
+        except (ValueError, TypeError):
+            data["new_organization"] = raw
+    else:
+        data["new_organization"] = data.get("new_organization") or None
+    # map stored columns to response aliases
+    data.setdefault("proposed_scope", data.get("scope", ""))
+    data.setdefault("priority", data.get("urgency", "Routine"))
+    data.setdefault("contact", data.get("requester_email", ""))
+    return InspectionRequest.model_validate(data)
+
+
 def _request_view(connection, request_id: str) -> InspectionRequest | None:
     row = connection.execute(
-        """SELECT r.id, r.department, r.requester_name, r.requester_email,
-            r.requester_verified, r.organization_id, o.name AS organization,
-            r.purpose, r.scope, r.urgency, r.status, r.created_at,
-            r.reviewed_by, r.reviewed_at
+        """SELECT r.id, r.department, r.contact, r.requester_name, r.requester_email,
+            r.requester_verified, r.organization_id,
+            COALESCE(o.name, r.organization_display) AS organization,
+            r.purpose, r.scope, r.urgency, r.proposed_scope, r.priority,
+            r.status, r.created_at, r.reviewed_by, r.reviewed_at,
+            r.new_organization AS new_organization_json
         FROM inspection_requests r
-        JOIN organizations o ON o.id = r.organization_id
+        LEFT JOIN organizations o ON o.id = r.organization_id
         WHERE r.id = ?""",
         (request_id,),
     ).fetchone()
-    return InspectionRequest.model_validate(dict(row)) if row else None
+    return _row_to_request(dict(row)) if row else None
 
 
 def submit_inspection_request(
@@ -29,11 +50,7 @@ def submit_inspection_request(
     client_host: str,
 ) -> InspectionRequest:
     now = datetime.now(timezone.utc)
-    window_start = now.replace(
-        minute=(now.minute // 15) * 15,
-        second=0,
-        microsecond=0,
-    )
+    window_start = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
     bucket_key = hashlib.sha256(client_host.encode("utf-8")).hexdigest()
 
     with get_connection() as connection:
@@ -53,29 +70,44 @@ def submit_inspection_request(
     if rate["request_count"] > RATE_LIMIT_REQUESTS:
         raise RateLimitExceeded("Too many inspection requests. Try again after the current 15-minute window.")
 
+    # resolve effective scope/urgency from either alias set
+    effective_scope = payload.proposed_scope or payload.scope or ""
+    effective_urgency = payload.priority or payload.urgency or "Routine"
+    effective_contact = payload.contact or payload.requester_email or ""
+    # new_organization: plain text string from frontend
+    new_org_value = payload.new_organization if isinstance(payload.new_organization, str) else (
+        json.dumps(payload.new_organization.model_dump()) if payload.new_organization else None
+    )
+
     with get_connection() as connection:
-        organization = connection.execute(
-            "SELECT id FROM organizations WHERE id = ?",
-            (payload.organization_id,),
-        ).fetchone()
-        if organization is None:
-            raise LookupError("The selected organization is not registered.")
+        if payload.organization_id:
+            org = connection.execute(
+                "SELECT id FROM organizations WHERE id = ?", (payload.organization_id,)
+            ).fetchone()
+            if org is None:
+                raise LookupError("The selected organization is not registered.")
         request_id = f"IR-{uuid.uuid4().hex[:16].upper()}"
         connection.execute(
             """INSERT INTO inspection_requests
-            (id, department, requester_name, requester_email, requester_verified,
-            organization_id, purpose, scope, urgency, status, created_at)
-            VALUES (?, ?, ?, ?, FALSE, ?, ?, ?, ?, 'Pending', ?)""",
+            (id, department, contact, requester_name, requester_email, requester_verified,
+            organization_id, organization_display, purpose, scope, urgency,
+            proposed_scope, priority, status, created_at, new_organization)
+            VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?)""",
             (
                 request_id,
                 payload.department,
-                payload.requester_name,
-                payload.requester_email,
+                effective_contact,
+                payload.requester_name or "",
+                payload.requester_email or "",
                 payload.organization_id,
-                payload.purpose,
-                payload.scope,
-                payload.urgency,
+                payload.organization,
+                payload.purpose or "",
+                effective_scope,
+                effective_urgency,
+                effective_scope,
+                effective_urgency,
                 now.isoformat(),
+                new_org_value,
             ),
         )
         result = _request_view(connection, request_id)
@@ -87,15 +119,17 @@ def submit_inspection_request(
 def get_inspection_requests() -> list[InspectionRequest]:
     with get_connection() as connection:
         rows = connection.execute(
-            """SELECT r.id, r.department, r.requester_name, r.requester_email,
-                r.requester_verified, r.organization_id, o.name AS organization,
-                r.purpose, r.scope, r.urgency, r.status, r.created_at,
-                r.reviewed_by, r.reviewed_at
+            """SELECT r.id, r.department, r.contact, r.requester_name, r.requester_email,
+                r.requester_verified, r.organization_id,
+                COALESCE(o.name, r.organization_display) AS organization,
+                r.purpose, r.scope, r.urgency, r.proposed_scope, r.priority,
+                r.status, r.created_at, r.reviewed_by, r.reviewed_at,
+                r.new_organization AS new_organization_json
             FROM inspection_requests r
-            JOIN organizations o ON o.id = r.organization_id
+            LEFT JOIN organizations o ON o.id = r.organization_id
             ORDER BY r.created_at DESC, r.id"""
         ).fetchall()
-    return [InspectionRequest.model_validate(dict(row)) for row in rows]
+    return [_row_to_request(dict(row)) for row in rows]
 
 
 def review_inspection_request(
@@ -103,13 +137,14 @@ def review_inspection_request(
     new_status: str,
     reviewer: str,
 ) -> InspectionRequest:
+    stored_status = "Rejected" if new_status == "Flagged" else new_status
     reviewed_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as connection:
         result = connection.execute(
             """UPDATE inspection_requests
             SET status = ?, reviewed_by = ?, reviewed_at = ?
             WHERE id = ? AND status = 'Pending'""",
-            (new_status, reviewer, reviewed_at, request_id),
+            (stored_status, reviewer, reviewed_at, request_id),
         )
         if result.rowcount == 0:
             existing = _request_view(connection, request_id)
