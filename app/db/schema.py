@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS inspections (
     location_accuracy_m     REAL        CHECK (location_accuracy_m >= 0),
     location_captured_at    TIMESTAMPTZ,
     location_distance_m     REAL,
-    location_verified       BOOLEAN,
+    location_verified       INTEGER,    -- 1=verified, 0=outside, NULL=unknown
     location_check_status   TEXT,
     photo_media_id          TEXT        REFERENCES evidence_media(media_id) ON DELETE SET NULL,
     photo_captured_at       TIMESTAMPTZ,

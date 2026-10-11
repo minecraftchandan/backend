@@ -130,10 +130,10 @@ def create_inspection(data: InspectionCreate) -> Inspection:
         if accuracy is None:
             location_check_status = "inconclusive"
         elif dist + accuracy <= scheduled.site_radius_m:
-            location_verified = True
+            location_verified = 1
             location_check_status = "verified"
         elif dist - accuracy > scheduled.site_radius_m:
-            location_verified = False
+            location_verified = 0
             location_check_status = "outside_radius"
         else:
             location_check_status = "inconclusive"

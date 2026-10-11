@@ -47,11 +47,11 @@ _DEMO_SCHEDULES = (
 )
 
 _DEMO_INSPECTIONS = (
-    ("REC-1001", "Nirmal Jeevan Foundation", "Kondhwa, Pune", "2026-09-18", "10:00 AM", "Ramesh Kadam", "Verified", "Records and facilities found in order.", None, 18.4672, 73.8900, 8, "2026-09-18T10:00:00+05:30", None, 0, True, "verified", "demo-inspection-photo"),
-    ("REC-1002", "Asha Bal Vikas Sanstha", "Kothrud, Pune", "2026-09-20", "11:15 AM", "Sunita Patil", "Verified", "Demo visit inside the registered boundary.", "SCH-1001", 18.5075, 73.8078, 12, "2026-09-20T11:15:00+05:30", None, 14, True, "verified", "demo-inspection-photo"),
-    ("REC-1003", "Sanjeevani Old Age Support Trust", "Hadapsar, Pune", "2026-09-22", "02:20 PM", "Arjun Deshmukh", "Flagged", "Demo visit outside the configured boundary.", "SCH-1002", 18.5045, 73.9300, 10, "2026-09-22T14:20:00+05:30", None, 320, False, "outside_radius", "demo-inspection-photo"),
+    ("REC-1001", "Nirmal Jeevan Foundation", "Kondhwa, Pune", "2026-09-18", "10:00 AM", "Ramesh Kadam", "Verified", "Records and facilities found in order.", None, 18.4672, 73.8900, 8, "2026-09-18T10:00:00+05:30", None, 0, 1, "verified", "demo-inspection-photo"),
+    ("REC-1002", "Asha Bal Vikas Sanstha", "Kothrud, Pune", "2026-09-20", "11:15 AM", "Sunita Patil", "Verified", "Demo visit inside the registered boundary.", "SCH-1001", 18.5075, 73.8078, 12, "2026-09-20T11:15:00+05:30", None, 14, 1, "verified", "demo-inspection-photo"),
+    ("REC-1003", "Sanjeevani Old Age Support Trust", "Hadapsar, Pune", "2026-09-22", "02:20 PM", "Arjun Deshmukh", "Flagged", "Demo visit outside the configured boundary.", "SCH-1002", 18.5045, 73.9300, 10, "2026-09-22T14:20:00+05:30", None, 320, 0, "outside_radius", "demo-inspection-photo"),
     ("REC-1004", "Prerna Mahila Sangh", "Shivaji Nagar, Pune", "2026-09-25", "09:40 AM", "Ramesh Kadam", "Submitted", "Demo record awaiting authority review.", None, 18.5308, 73.8475, 18, "2026-09-25T09:40:00+05:30", None, None, None, "not_configured", "demo-inspection-photo"),
-    ("REC-1005", "Gramin Shiksha Kendra", "Wagholi, Pune", "2026-09-28", "03:10 PM", "Sunita Patil", "Verified", "Demo visit inside the registered boundary.", None, 18.5793, 73.9780, 9, "2026-09-28T15:10:00+05:30", None, 0, True, "verified", "demo-inspection-photo"),
+    ("REC-1005", "Gramin Shiksha Kendra", "Wagholi, Pune", "2026-09-28", "03:10 PM", "Sunita Patil", "Verified", "Demo visit inside the registered boundary.", None, 18.5793, 73.9780, 9, "2026-09-28T15:10:00+05:30", None, 0, 1, "verified", "demo-inspection-photo"),
 )
 
 
@@ -85,12 +85,12 @@ def _seed_demo_inspection_history(connection) -> None:
         latitude = organization["latitude"]
         longitude = organization["longitude"]
         distance_m = 12.0
-        location_verified = True
+        location_verified = 1
         location_check_status = "verified"
         if status == "Flagged" and latitude is not None:
             latitude += 0.004
             distance_m = 445.0
-            location_verified = False
+            location_verified = 0
             location_check_status = "outside_radius"
         rows.append((
             inspection_id,
