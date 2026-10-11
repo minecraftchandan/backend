@@ -10,7 +10,9 @@ from app.schemas.schedule import ScheduleCreate, ScheduleItem
 from app.services import notification_service
 from app.services.schedule_demo import generate_random_schedule  # re-exported for routes
 
-_SCHEDULE_SELECT = """SELECT s.id, s.organization, s.location, s.date, s.time,
+_SCHEDULE_SELECT = """SELECT s.id, s.organization, s.location,
+    to_char(s.date, 'YYYY-MM-DD') AS date,
+    to_char(s.time, 'HH12:MI AM') AS time,
     COALESCE(u.name, s.inspector) AS inspector, s.status,
     s.site_latitude, s.site_longitude, s.site_radius_m,
     s.purpose, s.scope, s.inspection_request_id,
@@ -98,7 +100,7 @@ def create_scheduled_inspection(payload: ScheduleCreate) -> ScheduleItem:
 
         conflict = connection.execute(
             """SELECT id FROM schedules
-            WHERE date = ? AND time = ?
+            WHERE date = ?::date AND time = ?::time
             AND (inspector_id = ? OR (inspector_id IS NULL AND inspector = ?))
             AND lower(status) != 'completed' LIMIT 1""",
             (payload.date.isoformat(), scheduled_time, inspector["id"], inspector["name"]),

@@ -12,8 +12,14 @@ from app.schemas.inspection import Inspection, InspectionCreate
 from app.services import schedule_service
 from app.services.geo import distance_m
 
-_SELECT_COLS = """SELECT id, organization, location, date, time, inspector, status, notes,
-    schedule_id, scheduled_date, scheduled_time, latitude, longitude,
+_SELECT_COLS = """SELECT id, organization, location,
+    to_char(date, 'YYYY-MM-DD') AS date,
+    to_char(time, 'HH12:MI AM') AS time,
+    inspector, status, notes,
+    schedule_id,
+    to_char(scheduled_date, 'YYYY-MM-DD') AS scheduled_date,
+    to_char(scheduled_time, 'HH12:MI AM') AS scheduled_time,
+    latitude, longitude,
     location_accuracy_m, location_captured_at, photo_captured_at, submitted_at,
     client_submission_id, location_distance_m, location_verified,
     location_check_status, photo_media_id"""

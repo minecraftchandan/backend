@@ -14,13 +14,15 @@ def deliver_schedule_notification(schedule_id: str) -> dict:
     with get_connection() as connection:
         row = connection.execute(
             """SELECT o.schedule_id, o.status AS outbox_status, s.organization,
-                s.date, s.time, s.purpose, s.scope, s.inspector,
+                to_char(s.date, 'YYYY-MM-DD') AS date,
+                to_char(s.time, 'HH12:MI AM') AS time,
+                s.purpose, s.scope, s.inspector,
                 org.contact_email, org.contact_person,
                 org.contact_email_verified, u.designation, u.official_id,
                 u.qualifications
             FROM inspection_notification_outbox o
             JOIN schedules s ON s.id = o.schedule_id
-            JOIN organizations org ON org.name = s.organization
+            LEFT JOIN organizations org ON org.id = s.organization_id OR org.name = s.organization
             LEFT JOIN users u ON u.id = s.inspector_id
             WHERE o.schedule_id = ?""",
             (schedule_id,),
