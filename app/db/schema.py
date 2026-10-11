@@ -39,10 +39,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_official_id
-    ON users(official_id) WHERE official_id IS NOT NULL AND official_id <> '';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
-    ON users(email) WHERE email <> '';
 
 -- ============================================================
 -- ORGANIZATIONS  — registered NGOs / entities under inspection
@@ -117,8 +113,6 @@ CREATE TABLE IF NOT EXISTS schedules (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_schedules_date       ON schedules(date);
-CREATE INDEX IF NOT EXISTS idx_schedules_inspector  ON schedules(inspector_id);
-CREATE INDEX IF NOT EXISTS idx_schedules_org        ON schedules(organization_id);
 
 -- ============================================================
 -- INSPECTIONS  — submitted / completed inspection records
@@ -149,7 +143,6 @@ CREATE TABLE IF NOT EXISTS inspections (
     client_submission_id    TEXT        UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_inspections_date     ON inspections(date);
-CREATE INDEX IF NOT EXISTS idx_inspections_schedule ON inspections(schedule_id);
 
 -- ============================================================
 -- EVIDENCE MEDIA  — binary photo/video blobs
