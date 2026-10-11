@@ -75,6 +75,20 @@ def _initialize_connection(connection: PostgresConnection) -> None:
 
         connection.executescript(DDL)
         connection.executescript(MIGRATIONS)
+        connection._connection.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_attrdef ad
+                    JOIN pg_attribute a ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+                    JOIN pg_class c ON c.oid = a.attrelid
+                    WHERE c.relname = 'users' AND a.attname = 'id'
+                ) THEN
+                    CREATE SEQUENCE IF NOT EXISTS users_id_seq;
+                    PERFORM setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 0) + 1, false);
+                    ALTER TABLE users ALTER COLUMN id SET DEFAULT nextval('users_id_seq');
+                END IF;
+            END $$
+        """)
         apply_seed(connection)
         connection.commit()
         _initialized = True
