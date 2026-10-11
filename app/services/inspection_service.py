@@ -13,8 +13,8 @@ from app.services import schedule_service
 from app.services.geo import distance_m
 
 _SELECT_COLS = """SELECT id, organization, location,
-    to_char(date, 'YYYY-MM-DD') AS date,
-    to_char(time, 'HH12:MI AM') AS time,
+    to_char(inspections.date, 'YYYY-MM-DD') AS date,
+    to_char(inspections.time, 'HH12:MI AM') AS time,
     inspector, status, notes,
     schedule_id,
     to_char(scheduled_date, 'YYYY-MM-DD') AS scheduled_date,
@@ -28,7 +28,7 @@ _SELECT_COLS = """SELECT id, organization, location,
 def get_all_inspections() -> list[Inspection]:
     with get_connection() as connection:
         rows = connection.execute(
-            f"{_SELECT_COLS} FROM inspections ORDER BY inspections.date, inspections.time, id"
+            f"{_SELECT_COLS} FROM inspections ORDER BY 4, 5, id"
         ).fetchall()
     return [Inspection.model_validate(dict(row)) for row in rows]
 
