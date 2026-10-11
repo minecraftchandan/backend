@@ -14,9 +14,7 @@ def deliver_schedule_notification(schedule_id: str) -> dict:
     with get_connection() as connection:
         row = connection.execute(
             """SELECT o.schedule_id, o.status AS outbox_status, s.organization,
-                to_char(s.date, 'YYYY-MM-DD') AS date,
-                to_char(s.time, 'HH12:MI AM') AS time,
-                s.purpose, s.scope, s.inspector,
+                s.date, s.time, s.purpose, s.scope, s.inspector,
                 org.contact_email, org.contact_person,
                 org.contact_email_verified, u.designation, u.official_id,
                 u.qualifications

@@ -11,8 +11,7 @@ from app.services import notification_service
 from app.services.schedule_demo import generate_random_schedule  # re-exported for routes
 
 _SCHEDULE_SELECT = """SELECT s.id, s.organization, s.location,
-    to_char(s.date, 'YYYY-MM-DD') AS date,
-    to_char(s.time, 'HH12:MI AM') AS time,
+    s.date, s.time,
     COALESCE(u.name, s.inspector) AS inspector, s.status,
     s.site_latitude, s.site_longitude, s.site_radius_m,
     s.purpose, s.scope, s.inspection_request_id,

@@ -11,8 +11,8 @@ def get_all_organizations() -> list[Organization]:
     with get_connection() as connection:
         rows = connection.execute(
             """SELECT o.id, o.name, o.reg, o.location, o.address,
-                COALESCE(MAX(to_char(i.date, 'YYYY-MM-DD')), '') AS last,
-                COALESCE(MIN(CASE WHEN s.status = 'Scheduled' THEN to_char(s.date, 'YYYY-MM-DD') END), '') AS next,
+                COALESCE(MAX(i.date), '') AS last,
+                COALESCE(MIN(CASE WHEN s.status = 'Scheduled' THEN s.date END), '') AS next,
                 o.verification, o.risk, COUNT(DISTINCT i.id) AS count,
                 o.latitude, o.longitude, o.radius_m
             FROM organizations o

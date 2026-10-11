@@ -70,8 +70,7 @@ def generate_random_schedule(count: int = 3) -> list[ScheduleItem]:
             for time in _DEMO_TIMES
         ]
         existing_rows = connection.execute(
-            """SELECT organization, to_char(date,'YYYY-MM-DD') AS date,
-            to_char(time,'HH12:MI AM') AS time, inspector, inspector_id FROM schedules"""
+            "SELECT organization, date, time, inspector, inspector_id FROM schedules"
         ).fetchall()
         occupied_slots = {(r["organization"], r["date"], r["time"]) for r in existing_rows}
         busy_id_slots = {(r["date"], r["time"], r["inspector_id"]) for r in existing_rows if r["inspector_id"]}
