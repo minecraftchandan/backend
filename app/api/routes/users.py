@@ -17,16 +17,12 @@ router = APIRouter(tags=["Users"])
 public_router = APIRouter(tags=["Users"])
 
 
-@public_router.post("/users/register", response_model=User, status_code=status.HTTP_201_CREATED)
-def register_user(payload: UserCreate):
-    try:
-        return user_service.register_user(payload)
-    except ValueError as error:
-        if "email_exists" in str(error):
-            raise HTTPException(status_code=409, detail="An account with this email already exists.")
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except psycopg.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
+@public_router.post("/users/register", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+def register_user(_payload: UserCreate):
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Registration is temporarily unavailable — the backend service needs an update. Please contact your Authority Officer to have your account created manually.",
+    )
 
 
 @router.get("/users", response_model=list[User], dependencies=[Depends(require_authority_officer)])
