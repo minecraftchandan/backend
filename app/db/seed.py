@@ -64,6 +64,7 @@ _PENDING_INSPECTORS = (
 )
 
 
+def _seed_demo_inspection_history(connection) -> None:
     india_timezone = timezone(timedelta(hours=5, minutes=30))
     organizations = connection.execute(
         "SELECT name, location, latitude, longitude FROM organizations ORDER BY name"

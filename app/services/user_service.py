@@ -1,11 +1,10 @@
 """User (inspector) persistence service."""
 
-import secrets
 from typing import Optional
 
 from app.database import get_connection
 from app.schemas.user import InspectorProfileUpdate, User, UserCreate, UserFullUpdate
-from app.services.auth_helpers import generate_username, hash_password
+from app.services.auth_helpers import generate_username, hash_password, new_salt
 
 _SELECT_COLS = """SELECT id, name, designation, region, specialization, email, phone,
     experience_years, bio, username, official_id, official_id_verified,
@@ -43,15 +42,24 @@ def register_user(data: UserCreate) -> User:
         ).fetchone()
         if existing is not None:
             raise ValueError("email_exists")
+        username = generate_username(data.name, connection)
+        salt = new_salt()
+        password_hash = hash_password(data.password, salt)
         connection.execute(
             """INSERT INTO users
             (name, designation, region, specialization, email, phone,
-             experience_years, bio, active, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL)""",
+             experience_years, bio, username, temp_password, active, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL)""",
             (
                 data.name, data.designation, data.region, data.specialization,
                 data.email, data.phone, data.experience_years, data.bio,
+                username, data.password,
             ),
+        )
+        connection.execute(
+            """INSERT INTO accounts (username, role, display_name, password_salt, password_hash)
+            VALUES (?, ?, ?, ?, ?)""",
+            (username, "inspector", data.name, salt.hex(), password_hash),
         )
         row = connection.execute(
             f"{_SELECT_COLS} FROM users WHERE email = ? ORDER BY id DESC LIMIT 1",
@@ -127,7 +135,7 @@ def update_inspector_profile(user_id: int, profile: InspectorProfileUpdate) -> O
             (
                 profile.name, profile.designation, profile.official_id,
                 profile.official_id_verified, profile.department_unit,
-                profile.jurisdiction, profile.jurisdiction,
+                profile.jurisdiction, profile.region,
                 profile.qualifications, profile.active, user_id,
             ),
         )
