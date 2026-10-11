@@ -9,7 +9,7 @@ import psycopg
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.security import require_authority_officer
+from app.api.security import require_authority_officer, require_authenticated_user
 from app.schemas.user import InspectorProfileUpdate, User, UserCreate, UserFullUpdate, UserStatusUpdate
 from app.services import user_service
 
@@ -32,6 +32,16 @@ def register_user(payload: UserCreate):
 @router.get("/users", response_model=list[User], dependencies=[Depends(require_authority_officer)])
 def list_users():
     return user_service.get_all_users(include_password=True)
+
+
+@router.get("/users/me", response_model=User)
+def get_current_user(claims: dict = Depends(require_authenticated_user)):
+    if claims.get("uid") is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = user_service.get_user_by_id(claims["uid"])
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 
 @router.get("/users/{user_id}", response_model=User)
