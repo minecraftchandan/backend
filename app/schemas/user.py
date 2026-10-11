@@ -96,3 +96,8 @@ class User(BaseModel):
     qualifications: str = ""
     active: bool = True
     status: Optional[str] = None
+
+    @field_validator("specialization", "email", "phone", "bio", "department_unit", "jurisdiction", "qualifications", mode="before")
+    @classmethod
+    def coerce_none_to_empty(cls, value):
+        return value if value is not None else ""
