@@ -36,29 +36,26 @@ def get_user_by_id(user_id: int, include_password: bool = False) -> Optional[Use
 
 
 def register_user(data: UserCreate) -> User:
-    salt = secrets.token_bytes(16)
-    password_hash = hash_password(data.password, salt)
+    """Create a pending inspector. No account/username is created until approval."""
     with get_connection() as connection:
-        username = generate_username(data.name, connection)
+        existing = connection.execute(
+            "SELECT id FROM users WHERE email = ?", (data.email,)
+        ).fetchone()
+        if existing is not None:
+            raise ValueError("email_exists")
         connection.execute(
             """INSERT INTO users
             (name, designation, region, specialization, email, phone,
-             experience_years, bio, username, temp_password,
-             department_unit, jurisdiction, active, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 'Pending')""",
+             experience_years, bio, active, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL)""",
             (
                 data.name, data.designation, data.region, data.specialization,
                 data.email, data.phone, data.experience_years, data.bio,
-                username, data.password,
             ),
         )
-        connection.execute(
-            """INSERT INTO accounts (username, role, display_name, password_salt, password_hash)
-            VALUES (?, 'inspector', ?, ?, ?)""",
-            (username, data.name, salt.hex(), password_hash),
-        )
         row = connection.execute(
-            f"{_SELECT_COLS} FROM users WHERE username = ?", (username,)
+            f"{_SELECT_COLS} FROM users WHERE email = ? ORDER BY id DESC LIMIT 1",
+            (data.email,),
         ).fetchone()
     return User.model_validate(dict(row))
 

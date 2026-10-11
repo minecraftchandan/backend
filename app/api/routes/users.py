@@ -21,6 +21,10 @@ public_router = APIRouter(tags=["Users"])
 def register_user(payload: UserCreate):
     try:
         return user_service.register_user(payload)
+    except ValueError as error:
+        if "email_exists" in str(error):
+            raise HTTPException(status_code=409, detail="An account with this email already exists.")
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except psycopg.IntegrityError as error:
         raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
 

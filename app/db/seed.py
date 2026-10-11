@@ -55,7 +55,15 @@ _DEMO_INSPECTIONS = (
 )
 
 
-def _seed_demo_inspection_history(connection) -> None:
+_PENDING_INSPECTORS = (
+    ("Priya Sharma",    "Field Inspector",      "Mumbai Division",     "Financial Compliance",     "priya.sharma@example.invalid",    "9876543210", 5,  "Five years auditing NGO grant utilization across Mumbai suburban districts."),
+    ("Vikram Nair",     "Senior Inspector",     "Konkan Division",     "Labour & Welfare",         "vikram.nair@example.invalid",     "9845671230", 8,  "Specializes in labour welfare scheme compliance and contractor workforce audits in coastal districts."),
+    ("Meera Joshi",     "Field Inspector",      "Aurangabad Division", "Health & Sanitation",      "meera.joshi@example.invalid",     "9812309876", 4,  "Four years of field work in health scheme beneficiary verification and sanitation infrastructure audits."),
+    ("Suresh Kulkarni", "Lead Inspector",       "Nagpur Division",     "Infrastructure",           "suresh.kulkarni@example.invalid", "9867452310", 11, "Eleven years covering infrastructure project audits and Smart Cities Mission fund utilization in Vidarbha."),
+    ("Anita Bhosale",   "Specialist Inspector", "Amravati Division",   "Environmental Compliance", "anita.bhosale@example.invalid",   "9823104567", 6,  "Environmental compliance specialist with six years reviewing industrial and agricultural scheme adherence."),
+)
+
+
     india_timezone = timezone(timedelta(hours=5, minutes=30))
     organizations = connection.execute(
         "SELECT name, location, latitude, longitude FROM organizations ORDER BY name"
@@ -121,6 +129,14 @@ def apply_seed(connection) -> None:
         (id, name, designation, region, official_id, department_unit, jurisdiction, active)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         _DEMO_USERS,
+    )
+
+    connection.executemany(
+        """INSERT OR IGNORE INTO users
+        (name, designation, region, specialization, email, phone, experience_years, bio, active, status)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL
+        WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ?)""",
+        [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[4]) for r in _PENDING_INSPECTORS],
     )
 
     seeded_organizations = [
