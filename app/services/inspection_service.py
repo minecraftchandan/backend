@@ -28,7 +28,7 @@ _SELECT_COLS = """SELECT id, organization, location,
 def get_all_inspections() -> list[Inspection]:
     with get_connection() as connection:
         rows = connection.execute(
-            f"{_SELECT_COLS} FROM inspections ORDER BY date, time, id"
+            f"{_SELECT_COLS} FROM inspections ORDER BY inspections.date, inspections.time, id"
         ).fetchall()
     return [Inspection.model_validate(dict(row)) for row in rows]
 

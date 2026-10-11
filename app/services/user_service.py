@@ -1,5 +1,6 @@
 """User (inspector) persistence service."""
 
+import secrets
 from typing import Optional
 
 from app.database import get_connection

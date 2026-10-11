@@ -11,12 +11,7 @@ RATE_LIMIT_REQUESTS = 5
 
 
 def _row_to_request(row: dict) -> InspectionRequest:
-    data = dict(row)
-    # map scope/urgency to the response aliases the frontend reads
-    data.setdefault("proposed_scope", data.get("scope", ""))
-    data.setdefault("priority", data.get("urgency", "Routine"))
-    data.setdefault("contact", data.get("requester_email", ""))
-    return InspectionRequest.model_validate(data)
+    return InspectionRequest.model_validate(dict(row))
 
 
 def _request_view(connection, request_id: str) -> InspectionRequest | None:
@@ -59,9 +54,9 @@ def submit_inspection_request(
     if rate["request_count"] > RATE_LIMIT_REQUESTS:
         raise RateLimitExceeded("Too many inspection requests. Try again after the current 15-minute window.")
 
-    # resolve effective scope/urgency from either alias set
-    effective_scope = payload.proposed_scope or payload.scope or ""
-    effective_urgency = payload.priority or payload.urgency or "Routine"
+    # resolve effective scope/urgency
+    effective_scope = payload.scope or ""
+    effective_urgency = payload.urgency or "Routine"
 
     with get_connection() as connection:
         if payload.organization_id:
