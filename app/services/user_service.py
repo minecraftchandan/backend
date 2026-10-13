@@ -1,11 +1,10 @@
 """User (inspector) persistence service."""
 
-import secrets
 from typing import Optional
 
 from app.database import get_connection
-from app.schemas.user import InspectorProfileUpdate, User, UserCreate, UserFullUpdate
-from app.services.auth_helpers import generate_username, hash_password, new_salt
+from app.schemas.user import InspectorProfileUpdate, User, UserCreate, UserCredentialsUpdate, UserFullUpdate
+from app.services.auth_helpers import hash_password, new_salt
 
 _SELECT_COLS = """SELECT id, name, designation, region, specialization, email, phone,
     experience_years, bio, username, official_id, official_id_verified,
@@ -35,6 +34,53 @@ def get_user_by_id(user_id: int, include_password: bool = False) -> Optional[Use
     return _row_to_user(dict(row), include_password) if row else None
 
 
+def _replace_account_credentials(connection, old_username, username, display_name, password):
+    if not username:
+        raise ValueError("username_required")
+
+    if username == old_username:
+        if password is not None:
+            salt = new_salt()
+            connection.execute(
+                "UPDATE accounts SET password_salt = ?, password_hash = ? WHERE username = ?",
+                (salt.hex(), hash_password(password, salt), username),
+            )
+        return None
+
+    existing_account = None
+    if password is None:
+        if not old_username:
+            raise ValueError("credentials_required")
+        existing_account = connection.execute(
+            "SELECT role, password_salt, password_hash FROM accounts WHERE username = ?",
+            (old_username,),
+        ).fetchone()
+        if existing_account is None:
+            raise ValueError("credentials_required")
+
+    if connection.execute(
+        "SELECT username FROM accounts WHERE username = ?", (username,)
+    ).fetchone() is not None:
+        raise ValueError("username_exists")
+
+    if password is not None:
+        salt = new_salt()
+        role = "inspector"
+        password_salt = salt.hex()
+        password_hash = hash_password(password, salt)
+    else:
+        role = existing_account["role"]
+        password_salt = existing_account["password_salt"]
+        password_hash = existing_account["password_hash"]
+
+    connection.execute(
+        """INSERT INTO accounts (username, role, display_name, password_salt, password_hash)
+        VALUES (?, ?, ?, ?, ?)""",
+        (username, role, display_name, password_salt, password_hash),
+    )
+    return old_username
+
+
 def register_user(data: UserCreate) -> User:
     """Create a pending inspector. No account/username is created until approval."""
     with get_connection() as connection:
@@ -43,30 +89,42 @@ def register_user(data: UserCreate) -> User:
         ).fetchone()
         if existing is not None:
             raise ValueError("email_exists")
-        username = generate_username(data.name, connection)
-        salt = new_salt()
-        password_hash = hash_password(data.password, salt)
         connection.execute(
             """INSERT INTO users
             (name, designation, region, specialization, email, phone,
-             experience_years, bio, username, temp_password, active, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL)""",
+             experience_years, bio, qualifications, active, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL)""",
             (
                 data.name, data.designation, data.region, data.specialization,
                 data.email, data.phone, data.experience_years, data.bio,
-                username, data.password,
+                data.qualifications,
             ),
-        )
-        connection.execute(
-            """INSERT INTO accounts (username, role, display_name, password_salt, password_hash)
-            VALUES (?, ?, ?, ?, ?)""",
-            (username, "inspector", data.name, salt.hex(), password_hash),
         )
         row = connection.execute(
             f"{_SELECT_COLS} FROM users WHERE email = ? ORDER BY id DESC LIMIT 1",
             (data.email,),
         ).fetchone()
     return User.model_validate(dict(row))
+
+
+def assign_credentials(user_id: int, data: UserCredentialsUpdate) -> Optional[User]:
+    """Set username and password for an approved inspector, creating the account row."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT username, name FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        old_username = _replace_account_credentials(
+            connection, row["username"], data.username, row["name"], data.password
+        )
+        connection.execute(
+            "UPDATE users SET username = ?, temp_password = ? WHERE id = ?",
+            (data.username, data.password, user_id),
+        )
+        if old_username:
+            connection.execute("DELETE FROM accounts WHERE username = ?", (old_username,))
+    return get_user_by_id(user_id, include_password=True)
 
 
 def update_user_full(user_id: int, data: UserFullUpdate) -> Optional[User]:
@@ -78,30 +136,32 @@ def update_user_full(user_id: int, data: UserFullUpdate) -> Optional[User]:
             return None
         new_username = data.username or existing["username"]
         new_temp_password = existing["temp_password"]
-        if data.password:
-            salt = secrets.token_bytes(16)
-            password_hash = hash_password(data.password, salt)
-            new_temp_password = data.password
-            connection.execute(
-                "UPDATE accounts SET password_salt = ?, password_hash = ? WHERE username = ?",
-                (salt.hex(), password_hash, existing["username"]),
+        old_username_to_delete = None
+        if data.username is not None or data.password is not None:
+            old_username_to_delete = _replace_account_credentials(
+                connection,
+                existing["username"],
+                new_username,
+                data.name,
+                data.password,
             )
-            if new_username != existing["username"]:
-                connection.execute(
-                    "UPDATE accounts SET username = ? WHERE username = ?",
-                    (new_username, existing["username"]),
-                )
+        if data.password is not None:
+            new_temp_password = data.password
         connection.execute(
             """UPDATE users SET name = ?, designation = ?, region = ?, specialization = ?,
-                email = ?, phone = ?, experience_years = ?, bio = ?,
+                email = ?, phone = ?, experience_years = ?, bio = ?, qualifications = ?,
                 username = ?, temp_password = ?
             WHERE id = ?""",
             (
                 data.name, data.designation, data.region, data.specialization,
                 data.email, data.phone, data.experience_years, data.bio,
-                new_username, new_temp_password, user_id,
+                data.qualifications, new_username, new_temp_password, user_id,
             ),
         )
+        if old_username_to_delete:
+            connection.execute(
+                "DELETE FROM accounts WHERE username = ?", (old_username_to_delete,)
+            )
     return get_user_by_id(user_id, include_password=True)
 
 
@@ -120,7 +180,8 @@ def delete_user(user_id: int) -> bool:
         row = connection.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
         if row is None:
             return False
-        connection.execute("DELETE FROM accounts WHERE username = ?", (row["username"],))
+        if row["username"]:
+            connection.execute("DELETE FROM accounts WHERE username = ?", (row["username"],))
         cursor = connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
     return cursor.rowcount > 0
 

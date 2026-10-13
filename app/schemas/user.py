@@ -20,11 +20,13 @@ class UserCreate(BaseModel):
     region: str = Field(min_length=2, max_length=150)
     experience_years: Optional[int] = Field(default=None, ge=0, le=60)
     bio: str = Field(default="", max_length=2000)
-    password: str = Field(min_length=6, max_length=128)
+    qualifications: str = Field(default="", max_length=1000)
 
-    @field_validator("name", "email", "designation", "specialization", "region", "phone", "bio", mode="before")
+    @field_validator("name", "email", "designation", "specialization", "region", "phone", "bio", "qualifications", mode="before")
     @classmethod
     def strip_fields(cls, value):
+        if value is None:
+            return ""
         return value.strip() if isinstance(value, str) else value
 
 
@@ -37,13 +39,21 @@ class UserFullUpdate(BaseModel):
     region: str = Field(min_length=2, max_length=150)
     experience_years: Optional[int] = Field(default=None, ge=0, le=60)
     bio: str = Field(default="", max_length=2000)
+    qualifications: str = Field(default="", max_length=1000)
     username: Optional[str] = Field(default=None, max_length=80)
     password: Optional[str] = Field(default=None, min_length=6, max_length=128)
 
-    @field_validator("name", "email", "designation", "specialization", "region", "phone", "bio", mode="before")
+    @field_validator("name", "email", "designation", "specialization", "region", "phone", "bio", "qualifications", mode="before")
     @classmethod
     def strip_fields(cls, value):
+        if value is None:
+            return ""
         return value.strip() if isinstance(value, str) else value
+
+
+class UserCredentialsUpdate(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=6, max_length=128)
 
 
 class UserStatusUpdate(BaseModel):

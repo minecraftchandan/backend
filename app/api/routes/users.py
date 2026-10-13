@@ -10,7 +10,14 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.security import require_authority_officer, require_authenticated_user
-from app.schemas.user import InspectorProfileUpdate, User, UserCreate, UserFullUpdate, UserStatusUpdate
+from app.schemas.user import (
+    InspectorProfileUpdate,
+    User,
+    UserCreate,
+    UserCredentialsUpdate,
+    UserFullUpdate,
+    UserStatusUpdate,
+)
 from app.services import user_service
 
 router = APIRouter(tags=["Users"])
@@ -23,10 +30,10 @@ def register_user(payload: UserCreate):
         return user_service.register_user(payload)
     except ValueError as error:
         if "email_exists" in str(error):
-            raise HTTPException(status_code=409, detail="An account with this email already exists.")
+            raise HTTPException(status_code=409, detail="Email already registered.")
         raise HTTPException(status_code=422, detail=str(error)) from error
     except psycopg.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
+        raise HTTPException(status_code=409, detail="Email already registered.") from error
 
 
 @router.get("/users", response_model=list[User], dependencies=[Depends(require_authority_officer)])
@@ -54,7 +61,33 @@ def get_user(user_id: int, claims: dict = Depends(require_authority_officer)):
 
 @router.put("/users/{user_id}", response_model=User, dependencies=[Depends(require_authority_officer)])
 def update_user_full(user_id: int, payload: UserFullUpdate):
-    user = user_service.update_user_full(user_id, payload)
+    try:
+        user = user_service.update_user_full(user_id, payload)
+    except ValueError as error:
+        if "username_exists" in str(error):
+            raise HTTPException(status_code=409, detail="Username is already assigned.") from error
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except psycopg.IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Username is already assigned.") from error
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.put(
+    "/users/{user_id}/credentials",
+    response_model=User,
+    dependencies=[Depends(require_authority_officer)],
+)
+def assign_inspector_credentials(user_id: int, payload: UserCredentialsUpdate):
+    try:
+        user = user_service.assign_credentials(user_id, payload)
+    except ValueError as error:
+        if "username_exists" in str(error):
+            raise HTTPException(status_code=409, detail="Username is already assigned.") from error
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except psycopg.IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Username is already assigned.") from error
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
