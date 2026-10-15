@@ -17,23 +17,3 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USERNAME
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
-      - key: SMTP_USE_TLS
-        value: "true"
-      - key: STAGING_NOTIFICATION_TEST_INBOX
-        sync: false
-      - key: RESEND_API_KEY
-        sync: false
-      - key: RESEND_FROM_EMAIL
-        sync: false
-      - key: RESEND_FROM_NAME
-        value: Satark Drishti

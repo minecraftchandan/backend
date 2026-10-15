@@ -8,12 +8,15 @@ stored in PostgreSQL and include the inspector's operational profile.
 import re
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class UserCreate(BaseModel):
     name: str = Field(min_length=2, max_length=150)
     email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
+    password: str = Field(min_length=8, max_length=128)
+    confirm_password: str = Field(min_length=8, max_length=128)
     phone: str = Field(default="", max_length=30)
     designation: str = Field(min_length=2, max_length=150)
     specialization: str = Field(default="", max_length=150)
@@ -28,6 +31,17 @@ class UserCreate(BaseModel):
         if value is None:
             return ""
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @model_validator(mode="after")
+    def passwords_match(self):
+        if self.password != self.confirm_password:
+            raise ValueError("Password and confirm password must match.")
+        return self
 
 
 class UserFullUpdate(BaseModel):
@@ -40,20 +54,12 @@ class UserFullUpdate(BaseModel):
     experience_years: Optional[int] = Field(default=None, ge=0, le=60)
     bio: str = Field(default="", max_length=2000)
     qualifications: str = Field(default="", max_length=1000)
-    username: Optional[str] = Field(default=None, max_length=80)
-    password: Optional[str] = Field(default=None, min_length=6, max_length=128)
-
     @field_validator("name", "email", "designation", "specialization", "region", "phone", "bio", "qualifications", mode="before")
     @classmethod
     def strip_fields(cls, value):
         if value is None:
             return ""
         return value.strip() if isinstance(value, str) else value
-
-
-class UserCredentialsUpdate(BaseModel):
-    username: str = Field(min_length=1, max_length=80)
-    password: str = Field(min_length=6, max_length=128)
 
 
 class UserStatusUpdate(BaseModel):
@@ -97,8 +103,6 @@ class User(BaseModel):
     experience_years: Optional[int] = None
     bio: str = ""
     username: Optional[str] = None
-    # temp_password is only populated for authority officer responses
-    password: Optional[str] = None
     official_id: Optional[str] = None
     official_id_verified: bool = False
     department_unit: str = ""
@@ -106,10 +110,6 @@ class User(BaseModel):
     qualifications: str = ""
     active: bool = True
     status: Optional[str] = None
-    email_sent: bool = False
-    email_sending: bool = False
-    email_attempts: int = 0
-    email_error: Optional[str] = None
 
     @field_validator("specialization", "email", "phone", "bio", "department_unit", "jurisdiction", "qualifications", mode="before")
     @classmethod

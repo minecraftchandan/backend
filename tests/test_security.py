@@ -1,8 +1,10 @@
 import os
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api import security
 
@@ -52,6 +54,34 @@ class UserAccessTokenTests(unittest.TestCase):
                 security.issue_user_access_token("authority", "authority")
 
         self.assertEqual(raised.exception.status_code, 503)
+
+    def test_pending_inspector_can_read_but_cannot_write(self):
+        token, _ = security.issue_user_access_token("inspector", "inspector", user_id=12)
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        connection = MagicMock()
+        connection.execute.return_value.fetchone.return_value = {
+            "status": "Pending",
+            "active": True,
+        }
+        database = MagicMock()
+        database.__enter__.return_value = connection
+
+        with patch("app.database.get_connection", return_value=database):
+            with self.assertRaises(HTTPException) as raised:
+                security.require_api_access(
+                    SimpleNamespace(method="POST", client=SimpleNamespace(host="203.0.113.1")),
+                    credentials,
+                )
+
+            self.assertEqual(raised.exception.status_code, 403)
+            self.assertIn("Manual verification", raised.exception.detail)
+
+            security.require_api_access(
+                SimpleNamespace(method="GET", client=SimpleNamespace(host="203.0.113.1")),
+                credentials,
+            )
+
+        connection.execute.assert_called_once()
 
 
 if __name__ == "__main__":

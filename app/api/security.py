@@ -86,6 +86,31 @@ def verify_user_access_token(token: str) -> dict:
     return payload
 
 
+def _require_verified_inspector_for_write(request: Request, claims: dict) -> None:
+    if claims["role"] != "inspector" or request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+
+    user_id = claims.get("uid")
+    if not isinstance(user_id, int):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector account is unavailable")
+
+    from app.database import get_connection
+
+    with get_connection() as connection:
+        inspector = connection.execute(
+            "SELECT status, active FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+    if inspector is None or not inspector["active"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector account is inactive")
+    if inspector["status"] != "Verified":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manual verification is in progress. Inspector actions are available after verification.",
+        )
+
+
 def require_authenticated_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> dict:
@@ -118,6 +143,27 @@ def require_api_access(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> None:
     expected_token = os.getenv("API_ACCESS_TOKEN", "").strip()
+    if credentials is not None:
+        if len(expected_token) >= 32 and hmac.compare_digest(
+            credentials.credentials, expected_token
+        ):
+            return
+
+        try:
+            claims = verify_user_access_token(credentials.credentials)
+        except HTTPException:
+            client_host = request.client.host if request.client else ""
+            if (
+                len(expected_token) < 32
+                and os.getenv("APP_ENV", "development").strip().lower() == "development"
+                and client_host in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+            ):
+                return
+            raise
+
+        _require_verified_inspector_for_write(request, claims)
+        return
+
     if len(expected_token) < 32:
         client_host = request.client.host if request.client else ""
         if os.getenv("APP_ENV", "development").strip().lower() == "development" and client_host in {
@@ -137,7 +183,3 @@ def require_api_access(
             detail="Missing or invalid API access token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if hmac.compare_digest(credentials.credentials, expected_token):
-        return
-
-    verify_user_access_token(credentials.credentials)

@@ -21,7 +21,6 @@ class ScheduleCreate(BaseModel):
     purpose: str = Field(min_length=10, max_length=2000)
     scope: str = Field(min_length=10, max_length=4000)
     inspection_request_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    notify_organization: bool = True
 
     @field_validator("time", mode="before")
     @classmethod
@@ -65,6 +64,3 @@ class ScheduleItem(BaseModel):
     inspector_official_id_verified: bool = False
     inspector_qualifications: str = ""
     inspection_request_id: Optional[str] = None
-    organization_notified: bool = False
-    notification_status: str = "not_requested"
-    notification_error: Optional[str] = None

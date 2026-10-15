@@ -7,7 +7,6 @@ from datetime import datetime
 
 from app.database import get_connection
 from app.schemas.schedule import ScheduleCreate, ScheduleItem
-from app.services import notification_service
 from app.services.schedule_demo import generate_random_schedule  # re-exported for routes
 
 _SCHEDULE_SELECT = """SELECT s.id, s.organization, s.location,
@@ -15,7 +14,6 @@ _SCHEDULE_SELECT = """SELECT s.id, s.organization, s.location,
     COALESCE(u.name, s.inspector) AS inspector, s.status,
     s.site_latitude, s.site_longitude, s.site_radius_m,
     s.purpose, s.scope, s.inspection_request_id,
-    s.organization_notified, s.notification_status, s.notification_error,
     COALESCE(u.id, s.inspector_id) AS inspector_id,
     u.designation AS inspector_designation,
     u.official_id AS inspector_official_id,
@@ -69,11 +67,12 @@ def create_scheduled_inspection(payload: ScheduleCreate) -> ScheduleItem:
             raise LookupError("The selected organization is no longer registered.")
 
         inspector = connection.execute(
-            "SELECT id, name, designation, official_id, official_id_verified, qualifications FROM users WHERE id = ? AND active = TRUE",
+            """SELECT id, name, designation, official_id, official_id_verified, qualifications
+            FROM users WHERE id = ? AND active = TRUE AND status = 'Verified'""",
             (payload.inspector_id,),
         ).fetchone()
         if inspector is None:
-            raise LookupError("The selected inspector is not registered and active.")
+            raise LookupError("The selected inspector is not verified, registered, and active.")
         if not inspector["official_id"] or not inspector["official_id"].strip():
             raise ValueError("The selected inspector must have an official ID on their profile before scheduling.")
         if (
@@ -126,28 +125,18 @@ def create_scheduled_inspection(payload: ScheduleCreate) -> ScheduleItem:
             inspector_official_id_verified=inspector["official_id_verified"],
             inspector_qualifications=inspector["qualifications"] or "",
             inspection_request_id=payload.inspection_request_id,
-            organization_notified=False,
-            notification_status="pending" if payload.notify_organization else "not_requested",
         )
         connection.execute(
             """INSERT INTO schedules
             (id, organization, location, date, time, inspector, status,
             site_latitude, site_longitude, site_radius_m, purpose, scope,
-            inspector_id, inspection_request_id, notification_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            inspector_id, inspection_request_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id, item.organization, item.location, item.date, item.time,
                 item.inspector, item.status, item.site_latitude, item.site_longitude,
                 item.site_radius_m, item.purpose, item.scope, item.inspector_id,
-                item.inspection_request_id, item.notification_status,
+                item.inspection_request_id,
             ),
         )
-        if payload.notify_organization:
-            connection.execute(
-                "INSERT INTO inspection_notification_outbox (schedule_id, status) VALUES (?, 'pending')",
-                (item.id,),
-            )
-
-    if payload.notify_organization:
-        item = item.model_copy(update=notification_service.deliver_schedule_notification(item.id))
     return item

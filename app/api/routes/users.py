@@ -1,26 +1,12 @@
-"""
-Users API.
-
-Returns backend-managed inspector profile data. User records are not an
-authentication system.
-"""
+"""Inspector registration, profile, and verification endpoints."""
 
 import psycopg
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.security import require_authority_officer, require_authenticated_user
-from app.schemas.user import (
-    InspectorProfileUpdate,
-    User,
-    UserCreate,
-    UserCredentialsUpdate,
-    UserFullUpdate,
-    UserStatusUpdate,
-)
+from app.schemas.user import InspectorProfileUpdate, User, UserCreate, UserFullUpdate, UserStatusUpdate
 from app.services import user_service
-from app.services.email.delivery import deliver_inspector_credentials_email
-from app.services.email.resend import EmailDeliveryError
 
 router = APIRouter(tags=["Users"])
 public_router = APIRouter(tags=["Users"])
@@ -32,15 +18,20 @@ def register_user(payload: UserCreate):
         return user_service.register_user(payload)
     except ValueError as error:
         if "email_exists" in str(error):
-            raise HTTPException(status_code=409, detail="Email already registered.")
+            raise HTTPException(status_code=409, detail="Email already registered.") from error
+        if "username_exists" in str(error):
+            raise HTTPException(status_code=409, detail="Username is already assigned.") from error
         raise HTTPException(status_code=422, detail=str(error)) from error
     except psycopg.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="Email already registered.") from error
+        raise HTTPException(
+            status_code=409,
+            detail="Email or username is already registered.",
+        ) from error
 
 
 @router.get("/users", response_model=list[User], dependencies=[Depends(require_authority_officer)])
 def list_users():
-    return user_service.get_all_users(include_password=True)
+    return user_service.get_all_users()
 
 
 @router.get("/users/me", response_model=User)
@@ -55,7 +46,7 @@ def get_current_user(claims: dict = Depends(require_authenticated_user)):
 
 @router.get("/users/{user_id}", response_model=User)
 def get_user(user_id: int, claims: dict = Depends(require_authority_officer)):
-    user = user_service.get_user_by_id(user_id, include_password=True)
+    user = user_service.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -63,33 +54,7 @@ def get_user(user_id: int, claims: dict = Depends(require_authority_officer)):
 
 @router.put("/users/{user_id}", response_model=User, dependencies=[Depends(require_authority_officer)])
 def update_user_full(user_id: int, payload: UserFullUpdate):
-    try:
-        user = user_service.update_user_full(user_id, payload)
-    except ValueError as error:
-        if "username_exists" in str(error):
-            raise HTTPException(status_code=409, detail="Username is already assigned.") from error
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except psycopg.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="Username is already assigned.") from error
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-
-@router.put(
-    "/users/{user_id}/credentials",
-    response_model=User,
-    dependencies=[Depends(require_authority_officer)],
-)
-def assign_inspector_credentials(user_id: int, payload: UserCredentialsUpdate):
-    try:
-        user = user_service.assign_credentials(user_id, payload)
-    except ValueError as error:
-        if "username_exists" in str(error):
-            raise HTTPException(status_code=409, detail="Username is already assigned.") from error
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except psycopg.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="Username is already assigned.") from error
+    user = user_service.update_user_full(user_id, payload)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -97,46 +62,16 @@ def assign_inspector_credentials(user_id: int, payload: UserCredentialsUpdate):
 
 @router.put("/users/{user_id}/status", response_model=User, dependencies=[Depends(require_authority_officer)])
 def update_user_status(user_id: int, payload: UserStatusUpdate):
-    email_user = None
-    if payload.status == "Verified":
-        email_user = user_service.get_user_by_id(user_id)
-        if email_user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
-    user = user_service.update_user_status(user_id, payload.status)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    if email_user is not None:
-        try:
-            deliver_inspector_credentials_email(user_id)
-        except EmailDeliveryError as error:
-            raise HTTPException(
-                status_code=error.status_code,
-                detail=f"Inspector was marked Verified, but the credentials email could not be sent: {error}",
-            ) from error
-        user = user_service.get_user_by_id(user_id)
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-    return user.model_copy(update={"password": None})
-
-
-@router.post(
-    "/users/{user_id}/credentials-email",
-    response_model=User,
-    dependencies=[Depends(require_authority_officer)],
-)
-def resend_inspector_credentials_email(user_id: int):
     try:
-        deliver_inspector_credentials_email(user_id)
-    except EmailDeliveryError as error:
+        user = user_service.update_user_status(user_id, payload.status)
+    except ValueError as error:
         raise HTTPException(
-            status_code=error.status_code,
-            detail=f"The credentials email could not be sent: {error}",
+            status_code=409,
+            detail="Inspector must register with login credentials before verification.",
         ) from error
-    user = user_service.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    return user.model_copy(update={"password": None})
+    return user
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_authority_officer)])

@@ -127,15 +127,15 @@ def apply_seed(connection) -> None:
     """Insert all demo data. Called once during database initialization."""
     connection.executemany(
         """INSERT OR IGNORE INTO users
-        (id, name, designation, region, official_id, department_unit, jurisdiction, active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (id, name, designation, region, official_id, department_unit, jurisdiction, active, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Verified')""",
         _DEMO_USERS,
     )
 
     connection.executemany(
         """INSERT OR IGNORE INTO users
         (name, designation, region, specialization, email, phone, experience_years, bio, active, status)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NULL
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 'Pending'
         WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ?)""",
         [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[4]) for r in _PENDING_INSPECTORS],
     )

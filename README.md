@@ -28,9 +28,6 @@ unchanged and continues to use SQLite for local development.
    - `ALLOWED_ORIGINS`: the exact origin of the deployed frontend, including
      `https://` and no trailing slash, for example `https://example.onrender.com`.
      If multiple frontends call the API, comma-separate their origins.
-   - `RESEND_API_KEY` and `RESEND_FROM_EMAIL`: Resend API key and a sender
-     address on a domain verified with Resend. `RESEND_FROM_NAME` defaults to
-     `Satark Drishti`.
 5. Wait for the service health check at `/api/health` to pass. The API's
    generated `API_ACCESS_TOKEN` is in the service's Environment settings. Keep
    it secret. The local Vite development proxy uses it server-side. The mobile
@@ -79,39 +76,18 @@ The database schema is created on the first startup. Local demo accounts and
 fictional sample data are seeded automatically. The first registered records
 and inspection evidence uploaded after deployment are persisted in PostgreSQL.
 
-## Inspector verification emails
+## Inspector account verification
 
-When an Authority Officer marks an inspector as `Verified` through
-`PUT /api/users/{user_id}/status`, the API emails the inspector's assigned
-username and temporary password using Resend. Assign the inspector's email and
-credentials before verification. Set `RESEND_API_KEY` and `RESEND_FROM_EMAIL`
-in the backend environment; the sender address must belong to a domain verified
-in Resend. `RESEND_FROM_NAME` is optional and defaults to `Satark Drishti`.
+Inspectors choose a username and password during registration and can sign in
+immediately. New accounts start in `Pending` status. Pending inspectors may
+navigate the portal, but inspection actions are disabled in the frontend and
+rejected by the API until an Authority Officer verifies the account. The
+Inspector Portal displays that manual verification is in progress and gives an
+estimated completion time of 24 hours.
 
-Verified inspectors' credentials email status is returned with each user as
-`email_sent`, `email_sending`, `email_attempts`, and `email_error`. The
-Authority Officers' **Send mail** action can call
-`POST /api/users/{user_id}/credentials-email`. It safely skips already-sent
-messages and reports provider failures. Email is sent only when verification
-triggers it or an Authority Officer manually requests **Send mail**. Database
-claims prevent simultaneous manual requests from sending the same email twice.
-
-If Resend is unavailable or not configured, the inspector remains marked as
-verified and the API reports that email delivery failed. Repeating the
-verification action or clicking **Send mail** makes another attempt. When an
-inspector's email address, username, or password is updated, the sent state
-resets so the new credentials can be delivered manually. The email includes
-the temporary password, so use a strong Resend account/API key, restrict
-access to the provider account, and instruct inspectors to change the password
-immediately after signing in. Email is not an ideal channel for passwords; a
-one-time password-setup link should replace this flow before production use.
-
-When Resend rejects a send, the API response includes the provider's rejection
-reason when available, and the backend writes a warning with the HTTP status,
-provider reason, and Resend request ID (when provided) to the service logs.
-Check the Render backend logs and the matching Resend account's logs if a
-rejection still needs investigation. In particular, Resend's test sender can
-only deliver to the account owner's email until a sender domain is verified.
+Passwords are salted and hashed for authentication. The API never returns a
+plaintext password; Authority Officers can see verified inspectors' usernames
+but cannot view their passwords. No inspector or schedule emails are sent.
 
 ## Import the local SQLite snapshot
 
@@ -218,10 +194,10 @@ shared API token and Inspector sessions do not grant these permissions.
 `POST /api/schedule` requires an Authority Officer and accepts
 `organization_id`, active `inspector_id`, future `date` (`YYYY-MM-DD`),
 `time` (`HH:MM`), meaningful `purpose` and `scope`, optional
-`inspection_request_id`, and `notify_organization` (defaults to `true`). When a
-request ID is supplied, the request must be `Approved` and belong to the same
-organization. Creating a schedule directly is still an officer-only action;
-request approval itself never schedules one.
+`inspection_request_id`. The assigned inspector must be active and verified.
+When a request ID is supplied, the request must be `Approved` and belong to the
+same organization. Creating a schedule directly is still an officer-only
+action; request approval itself never schedules one.
 
 For example:
 
@@ -233,19 +209,14 @@ For example:
   "time": "10:30",
   "purpose": "Review reported compliance concerns",
   "scope": "Review records and inspect organizational facilities",
-  "inspection_request_id": "IR-0123456789ABCDEF",
-  "notify_organization": true
+  "inspection_request_id": "IR-0123456789ABCDEF"
 }
 ```
 
 `GET /api/schedule` includes purpose and scope for inspectors to review, and
 continues to return historical rows with null purpose/scope. The successful
 schedule response includes `id`, authoritative `organization`,
-`organization_notified`, `notification_status`, and, if applicable,
-`notification_error`, plus schedule date/time, purpose/scope, assigned
-inspector, and status. A notification is marked delivered only after SMTP
-accepts it. `POST /api/schedule/{id}/notification/retry` retries a failed
-notification and also requires an Authority Officer.
+plus schedule date/time, purpose/scope, assigned inspector, and status.
 
 Inspector profiles are stored on the backend with `official_id`, name,
 `official_id_verified`, designation, department/unit, jurisdiction,
@@ -271,42 +242,5 @@ Officer can set/verify these fields using
 `{"contact_email":"...","contact_person":"..."}`. Verify ownership of the
 address through an independent channel before using this endpoint. The contact
 email is not exposed in organization list/detail responses, and department
-requester emails are never used as organization destinations.
-
-### SMTP configuration and delivery state
-
-To enable organization notices, configure these environment variables on the
-backend service:
-
-| Variable | Required | Description |
-| --- | --- | --- |
-| `SMTP_HOST` | Yes | SMTP provider hostname. |
-| `SMTP_PORT` | No | SMTP port; defaults to `587`. |
-| `SMTP_USERNAME` / `SMTP_PASSWORD` | Together, if required by provider | SMTP authentication credentials. |
-| `SMTP_FROM_EMAIL` | Yes | Authorized sender address. |
-| `SMTP_USE_TLS` | No | `true` (default) uses STARTTLS; `false` disables STARTTLS. |
-| `STAGING_NOTIFICATION_TEST_INBOX` | Staging only | In `APP_ENV=staging`, send notices only to this controlled mailbox. If unset, staging notices are suppressed without contacting SMTP. |
-
-Never put SMTP credentials in source control or frontend configuration. If the
-organization lacks a verified contact, the SMTP settings are incomplete, or
-the provider rejects delivery, schedule creation remains persisted and returns
-`organization_notified: false` with a visible failure state. Each requested
-notification is kept in the PostgreSQL outbox with its attempt count and last
-failure; an Authority Officer can retry it after correcting the contact or
-provider configuration. A pending or failed notification does not undo a valid
-schedule.
-
-For staging, set `APP_ENV=staging` and configure a controlled
-`STAGING_NOTIFICATION_TEST_INBOX`. The SMTP message is redirected there even
-when an organization has no verified email; a provider-accepted delivery is
-reported as `notification_status: "test_sent"` and
-`organization_notified: false`, because the organization did not receive it.
-If no test inbox is configured, staging records
-`notification_status: "suppressed"` and does not send email. Staging notices
-are not retryable as organization notices. Do not use a real organization
-mailbox as the staging test inbox.
-
-These endpoints and notifications are **not live until this backend has been
-deployed, its startup migrations have run, Authority Officer sessions are
-configured, organization contacts have been verified, and SMTP is configured
-with a delivery provider**.
+requester emails are never used as organization destinations. Email addresses
+are retained as contact data only; this backend does not send email.

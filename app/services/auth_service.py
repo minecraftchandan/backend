@@ -18,8 +18,12 @@ def authenticate(username: str, password: str, portal_role: str) -> dict | None:
 
     with get_connection() as connection:
         account = connection.execute(
-            """SELECT username, role, display_name, password_salt, password_hash
-            FROM accounts WHERE username = ? AND role = ?""",
+            """SELECT a.username, a.role, a.display_name, a.password_salt, a.password_hash,
+                u.id AS user_id, COALESCE(u.status, 'Pending') AS status,
+                COALESCE(u.active, TRUE) AS active
+            FROM accounts a
+            LEFT JOIN users u ON u.username = a.username
+            WHERE a.username = ? AND a.role = ?""",
             (username.strip().lower(), role),
         ).fetchone()
 
@@ -35,18 +39,21 @@ def authenticate(username: str, password: str, portal_role: str) -> dict | None:
     if not hmac.compare_digest(password_hash, account["password_hash"]):
         return None
 
-    user_id = None
-    with get_connection() as connection:
-        user_row = connection.execute(
-            "SELECT id FROM users WHERE username = ?",
-            (account["username"],),
-        ).fetchone()
-        if user_row:
-            user_id = user_row["id"]
+    user_id = account["user_id"]
+    user_status = account["status"] if role == "inspector" else None
+    if role == "inspector" and (user_id is None or not account["active"] or user_status == "Flagged"):
+        return None
 
-    return {
+    session = {
         "role": account["role"],
         "username": account["username"],
         "displayName": account["display_name"],
         "userId": user_id,
     }
+    if user_status is not None:
+        session["status"] = user_status
+        if user_status == "Pending":
+            session["verificationMessage"] = (
+                "Manual verification is in progress. Estimated completion: within 24 hours."
+            )
+    return session
