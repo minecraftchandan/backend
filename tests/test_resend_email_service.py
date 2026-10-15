@@ -87,6 +87,38 @@ class ResendEmailServiceTests(unittest.TestCase):
         self.assertIn("own email address", str(raised.exception))
         self.assertNotIn("test-api-key", str(raised.exception))
 
+    def test_resend_rejection_logs_request_reference_and_nested_message(self):
+        response_body = json.dumps({
+            "error": {"message": "The sender domain has not been verified."},
+        }).encode("utf-8")
+        error = HTTPError(
+            "https://api.resend.com/emails",
+            403,
+            "Forbidden",
+            {"x-resend-id": "req_test_123"},
+            BytesIO(response_body),
+        )
+        with patch.dict(os.environ, {
+            "RESEND_API_KEY": "test-api-key",
+            "RESEND_FROM_EMAIL": "accounts@example.com",
+        }), patch(
+            "app.services.email.resend.urlopen",
+            side_effect=error,
+        ), self.assertLogs("app.services.email.resend", level="WARNING") as logs:
+            with self.assertRaises(EmailDeliveryError) as raised:
+                send_inspector_credentials_email(
+                    "inspector@example.com",
+                    "Priya Sharma",
+                    "priya.sharma",
+                    "TempPass123",
+                )
+
+        self.assertIn("sender domain has not been verified", str(raised.exception))
+        self.assertIn("req_test_123", str(raised.exception))
+        self.assertIn("req_test_123", logs.output[0])
+        self.assertNotIn("inspector@example.com", logs.output[0])
+        self.assertNotIn("test-api-key", logs.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

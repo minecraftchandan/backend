@@ -106,6 +106,13 @@ access to the provider account, and instruct inspectors to change the password
 immediately after signing in. Email is not an ideal channel for passwords; a
 one-time password-setup link should replace this flow before production use.
 
+When Resend rejects a send, the API response includes the provider's rejection
+reason when available, and the backend writes a warning with the HTTP status,
+provider reason, and Resend request ID (when provided) to the service logs.
+Check the Render backend logs and the matching Resend account's logs if a
+rejection still needs investigation. In particular, Resend's test sender can
+only deliver to the account owner's email until a sender domain is verified.
+
 ## Import the local SQLite snapshot
 
 The repository includes a generator that reads `backend/data/satark.sqlite3`

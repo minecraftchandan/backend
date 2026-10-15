@@ -2,10 +2,13 @@
 
 import html
 import json
+import logging
 import os
 from email.utils import formataddr
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
 
 
 def _provider_error_message(error: HTTPError) -> str:
@@ -14,15 +17,58 @@ def _provider_error_message(error: HTTPError) -> str:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         body = None
 
+    provider_name = None
+    provider_message = None
     if isinstance(body, dict):
-        name = body.get("name")
-        message = body.get("message")
-        if isinstance(message, str) and message.strip():
-            provider_detail = message.strip()[:300]
-            if isinstance(name, str) and name.strip():
-                provider_detail = f"{name.strip()}: {provider_detail}"
-            return f"Resend rejected the email (HTTP {error.code}): {provider_detail}"
-    return f"Resend rejected the email (HTTP {error.code})."
+        provider_name = body.get("name") or body.get("code")
+        provider_message = body.get("message") or body.get("error")
+        if isinstance(provider_message, dict):
+            provider_message = provider_message.get("message") or provider_message.get("detail")
+        if not isinstance(provider_message, str):
+            provider_message = None
+
+    request_id = None
+    if error.headers:
+        request_id = (
+            error.headers.get("resend-id")
+            or error.headers.get("x-resend-id")
+            or error.headers.get("x-request-id")
+        )
+
+    safe_provider_name = (
+        provider_name.strip().replace("\r", " ").replace("\n", " ")[:100]
+        if isinstance(provider_name, str) and provider_name.strip()
+        else "unspecified"
+    )
+    safe_request_id = (
+        request_id.replace("\r", " ").replace("\n", " ")[:100]
+        if request_id
+        else "unavailable"
+    )
+    safe_provider_message = (
+        provider_message.strip().replace("\r", " ").replace("\n", " ")[:300]
+        if provider_message and provider_message.strip()
+        else None
+    )
+    logger.warning(
+        "Resend rejected a credentials email: http_status=%s error_type=%s "
+        "request_id=%s provider_message=%s",
+        error.code,
+        safe_provider_name,
+        safe_request_id,
+        safe_provider_message or "unavailable",
+    )
+
+    detail = f"Resend rejected the email (HTTP {error.code})"
+    if safe_provider_message:
+        detail += f": {safe_provider_message}"
+    elif error.reason:
+        detail += f": {str(error.reason)[:100]}"
+    if request_id:
+        detail += f" (request ID: {safe_request_id})"
+    else:
+        detail += ". Check the Render service logs for the provider error details."
+    return detail
 
 
 class EmailDeliveryError(RuntimeError):
