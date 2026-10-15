@@ -33,12 +33,30 @@ def update_portal_settings(settings: dict) -> dict:
     return settings
 
 
-def get_evidence_media(media_id: str) -> tuple[str, bytes] | None:
+def get_evidence_media(
+    media_id: str,
+    inspector_id: int | None = None,
+) -> tuple[str, bytes] | None:
     with get_connection() as connection:
-        row = connection.execute(
-            "SELECT media_type, content FROM evidence_media WHERE media_id = ?",
-            (media_id,),
-        ).fetchone()
+        if inspector_id is None:
+            row = connection.execute(
+                "SELECT media_type, content FROM evidence_media WHERE media_id = ?",
+                (media_id,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """SELECT m.media_type, m.content FROM evidence_media m
+                WHERE m.media_id = ? AND EXISTS (
+                    SELECT 1 FROM inspections i
+                    JOIN schedules s ON s.id = i.schedule_id
+                    WHERE i.photo_media_id = m.media_id
+                    AND COALESCE(
+                        s.inspector_id,
+                        (SELECT id FROM users WHERE name = s.inspector ORDER BY id LIMIT 1)
+                    ) = ?
+                )""",
+                (media_id, inspector_id),
+            ).fetchone()
     if row is None:
         return None
     return row["media_type"], row["content"]

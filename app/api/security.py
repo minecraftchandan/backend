@@ -134,6 +134,36 @@ def require_authority_officer(
     return claims
 
 
+def require_active_inspector_id(claims: dict) -> int:
+    if claims.get("role") != "inspector":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inspector access is required",
+        )
+
+    user_id = claims.get("uid")
+    if type(user_id) is not int:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inspector account is unavailable",
+        )
+
+    from app.database import get_connection
+
+    with get_connection() as connection:
+        inspector = connection.execute(
+            "SELECT active FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+    if inspector is None or not inspector["active"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inspector account is inactive",
+        )
+    return user_id
+
+
 def _decode_segment(segment: str) -> bytes:
     return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
 

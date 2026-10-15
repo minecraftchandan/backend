@@ -24,6 +24,10 @@ LEFT JOIN users u ON u.id = COALESCE(
     s.inspector_id,
     (SELECT id FROM users WHERE name = s.inspector ORDER BY id LIMIT 1)
 )"""
+_SCHEDULE_INSPECTOR_ID = """COALESCE(
+    s.inspector_id,
+    (SELECT id FROM users WHERE name = s.inspector ORDER BY id LIMIT 1)
+)"""
 
 
 def _with_site_location(item: ScheduleItem) -> ScheduleItem:
@@ -39,6 +43,15 @@ def _with_site_location(item: ScheduleItem) -> ScheduleItem:
 def get_all_schedules() -> list[ScheduleItem]:
     with get_connection() as connection:
         rows = connection.execute(f"{_SCHEDULE_SELECT} ORDER BY s.date, s.time").fetchall()
+    return [_with_site_location(ScheduleItem.model_validate(dict(row))) for row in rows]
+
+
+def get_schedules_for_inspector(inspector_id: int) -> list[ScheduleItem]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"{_SCHEDULE_SELECT} WHERE {_SCHEDULE_INSPECTOR_ID} = ? ORDER BY s.date, s.time",
+            (inspector_id,),
+        ).fetchall()
     return [_with_site_location(ScheduleItem.model_validate(dict(row))) for row in rows]
 
 

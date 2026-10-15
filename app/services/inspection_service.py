@@ -12,19 +12,35 @@ from app.schemas.inspection import Inspection, InspectionCreate
 from app.services import schedule_service
 from app.services.geo import distance_m
 
-_SELECT_COLS = """SELECT id, organization, location,
-    date, time, inspector, status, notes,
-    schedule_id, scheduled_date, scheduled_time,
-    latitude, longitude,
-    location_accuracy_m, location_captured_at, photo_captured_at, submitted_at,
-    client_submission_id, location_distance_m, location_verified,
-    location_check_status, photo_media_id"""
+_SELECT_COLS = """SELECT i.id, i.organization, i.location,
+    i.date, i.time, i.inspector, i.status, i.notes,
+    i.schedule_id, i.scheduled_date, i.scheduled_time,
+    i.latitude, i.longitude,
+    i.location_accuracy_m, i.location_captured_at, i.photo_captured_at, i.submitted_at,
+    i.client_submission_id, i.location_distance_m, i.location_verified,
+    i.location_check_status, i.photo_media_id"""
+_SCHEDULE_INSPECTOR_ID = """COALESCE(
+    s.inspector_id,
+    (SELECT id FROM users WHERE name = s.inspector ORDER BY id LIMIT 1)
+)"""
 
 
 def get_all_inspections() -> list[Inspection]:
     with get_connection() as connection:
         rows = connection.execute(
-            f"{_SELECT_COLS} FROM inspections ORDER BY date, time, id"
+            f"{_SELECT_COLS} FROM inspections i ORDER BY i.date, i.time, i.id"
+        ).fetchall()
+    return [Inspection.model_validate(dict(row)) for row in rows]
+
+
+def get_inspections_for_inspector(inspector_id: int) -> list[Inspection]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"""{_SELECT_COLS} FROM inspections i
+            JOIN schedules s ON s.id = i.schedule_id
+            WHERE {_SCHEDULE_INSPECTOR_ID} = ?
+            ORDER BY i.date, i.time, i.id""",
+            (inspector_id,),
         ).fetchall()
     return [Inspection.model_validate(dict(row)) for row in rows]
 
@@ -32,7 +48,21 @@ def get_all_inspections() -> list[Inspection]:
 def get_inspection_by_id(inspection_id: str) -> Optional[Inspection]:
     with get_connection() as connection:
         row = connection.execute(
-            f"{_SELECT_COLS} FROM inspections WHERE id = ?", (inspection_id,)
+            f"{_SELECT_COLS} FROM inspections i WHERE i.id = ?", (inspection_id,)
+        ).fetchone()
+    return Inspection.model_validate(dict(row)) if row else None
+
+
+def get_inspection_by_id_for_inspector(
+    inspection_id: str,
+    inspector_id: int,
+) -> Optional[Inspection]:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""{_SELECT_COLS} FROM inspections i
+            JOIN schedules s ON s.id = i.schedule_id
+            WHERE i.id = ? AND {_SCHEDULE_INSPECTOR_ID} = ?""",
+            (inspection_id, inspector_id),
         ).fetchone()
     return Inspection.model_validate(dict(row)) if row else None
 
@@ -40,7 +70,7 @@ def get_inspection_by_id(inspection_id: str) -> Optional[Inspection]:
 def _fetch_by_submission_id(client_submission_id: str) -> Optional[Inspection]:
     with get_connection() as connection:
         row = connection.execute(
-            f"{_SELECT_COLS} FROM inspections WHERE client_submission_id = ?",
+            f"{_SELECT_COLS} FROM inspections i WHERE i.client_submission_id = ?",
             (client_submission_id,),
         ).fetchone()
     return Inspection.model_validate(dict(row)) if row else None

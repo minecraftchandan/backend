@@ -1,8 +1,13 @@
 """Portal-level demo data API."""
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
+from app.api.security import (
+    require_active_inspector_id,
+    require_authenticated_user,
+    require_authority_officer,
+)
 from app.services import portal_service, reverse_geocode_service
 
 router = APIRouter(tags=["Portal data"])
@@ -15,21 +20,37 @@ class PortalSettings(BaseModel):
     automaticSynchronization: bool
 
 
-@router.get("/portal-data", response_model=dict)
+@router.get(
+    "/portal-data",
+    response_model=dict,
+    dependencies=[Depends(require_authority_officer)],
+)
 def get_portal_data():
     """Return the persisted fixture collections used by the authority UI."""
     return portal_service.get_portal_data()
 
 
-@router.put("/portal-data/settings", response_model=PortalSettings)
+@router.put(
+    "/portal-data/settings",
+    response_model=PortalSettings,
+    dependencies=[Depends(require_authority_officer)],
+)
 def update_portal_settings(settings: PortalSettings):
     """Persist authority preferences in SQLite."""
     return portal_service.update_portal_settings(settings.model_dump())
 
 
 @router.get("/media/{media_id}")
-def get_evidence_media(media_id: str):
-    media = portal_service.get_evidence_media(media_id)
+def get_evidence_media(
+    media_id: str,
+    claims: dict = Depends(require_authenticated_user),
+):
+    inspector_id = (
+        require_active_inspector_id(claims)
+        if claims["role"] == "inspector"
+        else None
+    )
+    media = portal_service.get_evidence_media(media_id, inspector_id)
     if media is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evidence media not found")
     media_type, content = media

@@ -89,6 +89,16 @@ Passwords are salted and hashed for authentication. The API never returns a
 plaintext password; Authority Officers can see verified inspectors' usernames
 but cannot view their passwords. No inspector or schedule emails are sent.
 
+## Inspector assignment access
+
+Inspector schedule and inspection-record endpoints require a signed user
+session. The API derives the inspector ID from that session and returns only
+schedules assigned to that inspector and records linked to those schedules.
+Inspector submissions must use an assigned schedule, and the API supplies the
+assignment's organization, location, date, time, and inspector identity.
+Authority Officers retain access to all schedules and records; deleting or
+reviewing inspection records requires an Authority Officer session.
+
 ## Import the local SQLite snapshot
 
 The repository includes a generator that reads `backend/data/satark.sqlite3`

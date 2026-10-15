@@ -2,7 +2,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.security import require_authority_officer
+from app.api.security import (
+    require_active_inspector_id,
+    require_authenticated_user,
+    require_authority_officer,
+)
 from app.schemas.schedule import ScheduleCreate, ScheduleItem
 from app.services import schedule_service
 
@@ -10,9 +14,12 @@ router = APIRouter(tags=["Schedule"])
 
 
 @router.get("/schedule", response_model=list[ScheduleItem])
-def list_schedule():
-    """Return all persisted inspection schedules."""
-    return schedule_service.get_all_schedules()
+def list_schedule(claims: dict = Depends(require_authenticated_user)):
+    """Return all schedules to authorities and only assigned schedules to inspectors."""
+    if claims["role"] == "authority":
+        return schedule_service.get_all_schedules()
+    inspector_id = require_active_inspector_id(claims)
+    return schedule_service.get_schedules_for_inspector(inspector_id)
 
 
 @router.post(

@@ -2,19 +2,23 @@ import os
 import unittest
 from contextlib import contextmanager
 from datetime import date, timedelta
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 
 from app.api import security
-from app.api.routes import inspection_requests, schedules, users
+from app.api.routes import inspection_requests, inspections, portal, schedules, users
+from app.schemas.inspection import InspectionCreate
 from app.schemas.inspection_request import InspectionRequestCreate
 from app.schemas.schedule import ScheduleCreate
 from app.schemas.user import InspectorProfileUpdate
 from app.services import (
     inspection_request_service,
+    inspection_service,
+    portal_service,
     schedule_service,
     user_service,
 )
@@ -336,6 +340,8 @@ class AuthorizationTests(unittest.TestCase):
             (inspection_requests.authority_router, "GET", "/inspection-requests"),
             (inspection_requests.authority_router, "PATCH", "/inspection-requests/{request_id}"),
             (schedules.router, "POST", "/schedule"),
+            (inspections.router, "DELETE", "/inspections/{inspection_id}"),
+            (inspections.router, "PUT", "/inspections/{inspection_id}/status"),
             (users.router, "PUT", "/users/{user_id}/profile"),
         )
         for router, method, path in route_checks:
@@ -350,6 +356,138 @@ class AuthorizationTests(unittest.TestCase):
             if item.path == "/inspection-requests" and "POST" in item.methods
         )
         self.assertFalse(public_post.dependant.dependencies)
+
+    def test_inspector_data_routes_require_signed_sessions(self):
+        route_checks = (
+            (schedules.router, "GET", "/schedule"),
+            (inspections.router, "GET", "/inspections"),
+            (inspections.router, "GET", "/inspections/{inspection_id}"),
+            (inspections.router, "POST", "/inspections"),
+            (portal.router, "GET", "/media/{media_id}"),
+        )
+        for router, method, path in route_checks:
+            route = next(item for item in router.routes if item.path == path and method in item.methods)
+            self.assertTrue(
+                any(dependency.call is security.require_authenticated_user
+                    for dependency in route.dependant.dependencies),
+                f"{method} {path} lacks signed-session authorization",
+            )
+
+        portal_data = next(
+            item for item in portal.router.routes
+            if item.path == "/portal-data" and "GET" in item.methods
+        )
+        self.assertTrue(
+            any(dependency.call is security.require_authority_officer
+                for dependency in portal_data.dependant.dependencies),
+        )
+
+    def test_inspector_schedule_and_record_reads_use_user_scoped_queries(self):
+        claims = {"role": "inspector", "uid": 12}
+        with (
+            patch.object(schedules, "require_active_inspector_id", return_value=12),
+            patch.object(inspections, "require_active_inspector_id", return_value=12),
+            patch.object(schedule_service, "get_schedules_for_inspector", return_value=["assigned"]) as schedules_for_inspector,
+            patch.object(schedule_service, "get_all_schedules") as all_schedules,
+            patch.object(inspection_service, "get_inspections_for_inspector", return_value=["assigned"]) as inspections_for_inspector,
+            patch.object(inspection_service, "get_all_inspections") as all_inspections,
+            patch.object(inspection_service, "get_inspection_by_id_for_inspector", return_value="assigned") as inspection_for_inspector,
+            patch.object(inspection_service, "get_inspection_by_id") as any_inspection,
+        ):
+            self.assertEqual(schedules.list_schedule(claims), ["assigned"])
+            self.assertEqual(inspections.list_inspections(claims), ["assigned"])
+            self.assertEqual(inspections.get_inspection("REC-12", claims), "assigned")
+
+        schedules_for_inspector.assert_called_once_with(12)
+        all_schedules.assert_not_called()
+        inspections_for_inspector.assert_called_once_with(12)
+        all_inspections.assert_not_called()
+        inspection_for_inspector.assert_called_once_with("REC-12", 12)
+        any_inspection.assert_not_called()
+
+    def test_inspector_evidence_query_is_limited_to_assigned_schedules(self):
+        database = MagicMock()
+        connection = database.__enter__.return_value
+        connection.execute.return_value.fetchone.return_value = None
+        with patch.object(portal_service, "get_connection", return_value=database):
+            self.assertIsNone(portal_service.get_evidence_media("photo-12", 12))
+
+        query, params = connection.execute.call_args.args
+        self.assertIn("JOIN schedules s", query)
+        self.assertIn("i.photo_media_id = m.media_id", query)
+        self.assertEqual(params, ("photo-12", 12))
+
+    def test_inspector_cannot_submit_against_another_inspectors_schedule(self):
+        payload = InspectionCreate(
+            organization="Client supplied",
+            location="Client supplied",
+            date="2026-10-20",
+            time="10:30 AM",
+            inspector="Client supplied",
+            schedule_id="SCH-OTHER",
+        )
+        with (
+            patch.object(inspections, "require_active_inspector_id", return_value=12),
+            patch.object(
+                schedule_service,
+                "get_schedule_by_id",
+                return_value=SimpleNamespace(inspector_id=13),
+            ),
+            patch.object(inspection_service, "create_inspection") as create_record,
+            self.assertRaises(HTTPException) as raised,
+        ):
+            inspections.create_inspection(payload, {"role": "inspector", "uid": 12})
+
+        self.assertEqual(raised.exception.status_code, 404)
+        create_record.assert_not_called()
+
+    def test_inspector_submission_uses_schedule_details_from_backend(self):
+        payload = InspectionCreate(
+            organization="Client supplied",
+            location="Client supplied",
+            date="2026-10-20",
+            time="10:30 AM",
+            inspector="Client supplied",
+            schedule_id="SCH-12",
+        )
+        assigned_schedule = SimpleNamespace(
+            inspector_id=12,
+            organization="Registered Organization",
+            location="Registered Address",
+            date="2026-10-21",
+            time="11:00 AM",
+            inspector="Assigned Inspector",
+        )
+        with (
+            patch.object(inspections, "require_active_inspector_id", return_value=12),
+            patch.object(schedule_service, "get_schedule_by_id", return_value=assigned_schedule),
+            patch.object(inspection_service, "create_inspection", side_effect=lambda record: record) as create_record,
+        ):
+            submitted = inspections.create_inspection(
+                payload,
+                {"role": "inspector", "uid": 12},
+            )
+
+        create_record.assert_called_once()
+        self.assertEqual(submitted.organization, assigned_schedule.organization)
+        self.assertEqual(submitted.location, assigned_schedule.location)
+        self.assertEqual(submitted.inspector, assigned_schedule.inspector)
+        self.assertEqual(submitted.scheduled_date, assigned_schedule.date)
+
+    def test_inspector_schedule_queries_include_the_authenticated_user_id(self):
+        for service, method_name in (
+            (schedule_service, "get_schedules_for_inspector"),
+            (inspection_service, "get_inspections_for_inspector"),
+        ):
+            database = MagicMock()
+            connection = database.__enter__.return_value
+            connection.execute.return_value.fetchall.return_value = []
+            with patch.object(service, "get_connection", return_value=database):
+                getattr(service, method_name)(12)
+
+            query, params = connection.execute.call_args.args
+            self.assertIn("s.inspector_id", query)
+            self.assertEqual(params, (12,))
 
     def test_inspector_and_missing_user_session_are_denied(self):
         with self.assertRaises(HTTPException) as inspector:
