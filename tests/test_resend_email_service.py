@@ -119,6 +119,40 @@ class ResendEmailServiceTests(unittest.TestCase):
         self.assertNotIn("inspector@example.com", logs.output[0])
         self.assertNotIn("test-api-key", logs.output[0])
 
+    def test_resend_rejection_logs_metadata_for_empty_gateway_response(self):
+        error = HTTPError(
+            "https://api.resend.com/emails",
+            403,
+            "Forbidden",
+            {
+                "Content-Type": "text/html",
+                "Server": "example-gateway",
+                "cf-ray": "gateway-request-123",
+            },
+            BytesIO(b""),
+        )
+        with patch.dict(os.environ, {
+            "RESEND_API_KEY": "test-api-key",
+            "RESEND_FROM_EMAIL": "accounts@example.com",
+        }), patch(
+            "app.services.email.resend.urlopen",
+            side_effect=error,
+        ), self.assertLogs("app.services.email.resend", level="WARNING") as logs:
+            with self.assertRaises(EmailDeliveryError):
+                send_inspector_credentials_email(
+                    "inspector@example.com",
+                    "Priya Sharma",
+                    "priya.sharma",
+                    "TempPass123",
+                )
+
+        self.assertIn("response_format=empty-or-unreadable", logs.output[0])
+        self.assertIn("response_content_type=text/html", logs.output[0])
+        self.assertIn("response_server=example-gateway", logs.output[0])
+        self.assertIn("gateway_request_id=gateway-request-123", logs.output[0])
+        self.assertNotIn("inspector@example.com", logs.output[0])
+        self.assertNotIn("test-api-key", logs.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

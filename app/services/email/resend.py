@@ -13,8 +13,17 @@ logger = logging.getLogger(__name__)
 
 def _provider_error_message(error: HTTPError) -> str:
     try:
-        body = json.loads(error.read(4096).decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        response_body = error.read(4096)
+    except OSError:
+        response_body = b""
+
+    try:
+        body_text = response_body.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        body_text = ""
+    try:
+        body = json.loads(body_text) if body_text else None
+    except json.JSONDecodeError:
         body = None
 
     provider_name = None
@@ -26,14 +35,22 @@ def _provider_error_message(error: HTTPError) -> str:
             provider_message = provider_message.get("message") or provider_message.get("detail")
         if not isinstance(provider_message, str):
             provider_message = None
+    elif body is None and body_text and "<" not in body_text[:20]:
+        provider_message = body_text
 
     request_id = None
+    response_content_type = "unavailable"
+    response_server = "unavailable"
+    gateway_request_id = "unavailable"
     if error.headers:
         request_id = (
             error.headers.get("resend-id")
             or error.headers.get("x-resend-id")
             or error.headers.get("x-request-id")
         )
+        response_content_type = error.headers.get("Content-Type", "unavailable")[:100]
+        response_server = error.headers.get("Server", "unavailable")[:100]
+        gateway_request_id = error.headers.get("cf-ray", "unavailable")[:100]
 
     safe_provider_name = (
         provider_name.strip().replace("\r", " ").replace("\n", " ")[:100]
@@ -50,12 +67,25 @@ def _provider_error_message(error: HTTPError) -> str:
         if provider_message and provider_message.strip()
         else None
     )
+    response_format = (
+        "json" if isinstance(body, dict)
+        else "html" if body_text.startswith("<")
+        else "text" if body_text
+        else "empty-or-unreadable"
+    )
     logger.warning(
         "Resend rejected a credentials email: http_status=%s error_type=%s "
-        "request_id=%s provider_message=%s",
+        "request_id=%s gateway_request_id=%s response_format=%s "
+        "response_content_type=%s response_server=%s response_bytes=%s "
+        "provider_message=%s",
         error.code,
         safe_provider_name,
         safe_request_id,
+        gateway_request_id,
+        response_format,
+        response_content_type,
+        response_server,
+        len(response_body),
         safe_provider_message or "unavailable",
     )
 
