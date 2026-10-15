@@ -19,6 +19,8 @@ from app.schemas.user import (
     UserStatusUpdate,
 )
 from app.services import user_service
+from app.services.email.delivery import deliver_inspector_credentials_email
+from app.services.email.resend import EmailDeliveryError
 
 router = APIRouter(tags=["Users"])
 public_router = APIRouter(tags=["Users"])
@@ -95,10 +97,46 @@ def assign_inspector_credentials(user_id: int, payload: UserCredentialsUpdate):
 
 @router.put("/users/{user_id}/status", response_model=User, dependencies=[Depends(require_authority_officer)])
 def update_user_status(user_id: int, payload: UserStatusUpdate):
+    email_user = None
+    if payload.status == "Verified":
+        email_user = user_service.get_user_by_id(user_id)
+        if email_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
     user = user_service.update_user_status(user_id, payload.status)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    if email_user is not None:
+        try:
+            deliver_inspector_credentials_email(user_id)
+        except EmailDeliveryError as error:
+            raise HTTPException(
+                status_code=error.status_code,
+                detail=f"Inspector was marked Verified, but the credentials email could not be sent: {error}",
+            ) from error
+        user = user_service.get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+    return user.model_copy(update={"password": None})
+
+
+@router.post(
+    "/users/{user_id}/credentials-email",
+    response_model=User,
+    dependencies=[Depends(require_authority_officer)],
+)
+def resend_inspector_credentials_email(user_id: int):
+    try:
+        deliver_inspector_credentials_email(user_id)
+    except EmailDeliveryError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=f"The credentials email could not be sent: {error}",
+        ) from error
+    user = user_service.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user.model_copy(update={"password": None})
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_authority_officer)])

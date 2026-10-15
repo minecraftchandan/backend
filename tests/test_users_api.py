@@ -4,8 +4,9 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app.api.routes import users
-from app.schemas.user import User, UserCreate, UserFullUpdate
+from app.schemas.user import User, UserCreate, UserFullUpdate, UserStatusUpdate
 from app.services.auth_helpers import hash_password
+from app.services.email.resend import EmailDeliveryError
 from app.services.user_service import _replace_account_credentials
 
 
@@ -138,6 +139,109 @@ class UserApiContractTests(unittest.TestCase):
 
         self.assertIsNone(database.inserted)
         self.assertEqual(database.accounts["taken.username"], existing)
+
+    def test_verification_sends_assigned_credentials_without_returning_password(self):
+        inspector = User(
+            id=12,
+            name="Priya Sharma",
+            email="priya.sharma@example.com",
+            username="priya.sharma",
+            password="Temporary@123",
+            designation="Field Inspector",
+            region="Mumbai Division",
+        )
+        verified = inspector.model_copy(update={"status": "Verified"})
+        with patch(
+            "app.api.routes.users.user_service.get_user_by_id",
+            side_effect=[inspector, verified],
+        ) as get_user, patch(
+            "app.api.routes.users.user_service.update_user_status",
+            return_value=verified,
+        ), patch(
+            "app.api.routes.users.deliver_inspector_credentials_email",
+            return_value=True,
+        ) as send_email:
+            result = users.update_user_status(12, UserStatusUpdate(status="Verified"))
+
+        get_user.assert_any_call(12)
+        send_email.assert_called_once_with(12)
+        self.assertIsNone(result.password)
+        self.assertEqual(result.status, "Verified")
+
+    def test_verification_delivery_failure_leaves_inspector_verified(self):
+        inspector = User(
+            id=12,
+            name="Priya Sharma",
+            email="priya.sharma@example.com",
+            designation="Field Inspector",
+            region="Mumbai Division",
+        )
+        with patch(
+            "app.api.routes.users.user_service.get_user_by_id",
+            return_value=inspector,
+        ), patch(
+            "app.api.routes.users.user_service.update_user_status"
+        ) as update_status, patch(
+            "app.api.routes.users.deliver_inspector_credentials_email",
+            side_effect=EmailDeliveryError(
+                "Assign an email, username, and password before sending credentials.",
+                status_code=409,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                users.update_user_status(12, UserStatusUpdate(status="Verified"))
+
+        self.assertEqual(raised.exception.status_code, 409)
+        update_status.assert_called_once_with(12, "Verified")
+
+    def test_resend_failure_reports_that_inspector_was_already_verified(self):
+        inspector = User(
+            id=12,
+            name="Priya Sharma",
+            email="priya.sharma@example.com",
+            username="priya.sharma",
+            password="Temporary@123",
+            designation="Field Inspector",
+            region="Mumbai Division",
+        )
+        with patch(
+            "app.api.routes.users.user_service.get_user_by_id",
+            return_value=inspector,
+        ), patch(
+            "app.api.routes.users.user_service.update_user_status",
+            return_value=inspector.model_copy(update={"status": "Verified"}),
+        ), patch(
+            "app.api.routes.users.deliver_inspector_credentials_email",
+            side_effect=EmailDeliveryError("Resend did not accept the email."),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                users.update_user_status(12, UserStatusUpdate(status="Verified"))
+
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertIn("marked Verified", raised.exception.detail)
+
+    def test_manual_email_endpoint_calls_delivery_and_returns_sent_state(self):
+        inspector = User(
+            id=12,
+            name="Priya Sharma",
+            email="priya.sharma@example.com",
+            username="priya.sharma",
+            designation="Field Inspector",
+            region="Mumbai Division",
+            status="Verified",
+            email_sent=True,
+        )
+        with patch(
+            "app.api.routes.users.deliver_inspector_credentials_email",
+            return_value=True,
+        ) as send_email, patch(
+            "app.api.routes.users.user_service.get_user_by_id",
+            return_value=inspector,
+        ):
+            result = users.resend_inspector_credentials_email(12)
+
+        send_email.assert_called_once_with(12)
+        self.assertTrue(result.email_sent)
 
 
 if __name__ == "__main__":

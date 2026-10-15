@@ -8,7 +8,13 @@ from app.services.auth_helpers import hash_password, new_salt
 
 _SELECT_COLS = """SELECT id, name, designation, region, specialization, email, phone,
     experience_years, bio, username, official_id, official_id_verified,
-    department_unit, jurisdiction, qualifications, active, status"""
+    department_unit, jurisdiction, qualifications, active, status,
+    credentials_email_sent_at IS NOT NULL AS email_sent,
+    (credentials_email_claimed_at IS NOT NULL
+        AND credentials_email_claimed_at >= CURRENT_TIMESTAMP - INTERVAL '5 minutes')
+        AS email_sending,
+    credentials_email_attempts AS email_attempts,
+    credentials_email_last_error AS email_error"""
 
 _SELECT_COLS_WITH_PASS = _SELECT_COLS + ", temp_password AS password"
 
@@ -119,7 +125,10 @@ def assign_credentials(user_id: int, data: UserCredentialsUpdate) -> Optional[Us
             connection, row["username"], data.username, row["name"], data.password
         )
         connection.execute(
-            "UPDATE users SET username = ?, temp_password = ? WHERE id = ?",
+            """UPDATE users SET username = ?, temp_password = ?,
+                credentials_email_sent_at = NULL, credentials_email_claimed_at = NULL,
+                credentials_email_attempts = 0, credentials_email_last_error = NULL
+            WHERE id = ?""",
             (data.username, data.password, user_id),
         )
         if old_username:
@@ -130,7 +139,7 @@ def assign_credentials(user_id: int, data: UserCredentialsUpdate) -> Optional[Us
 def update_user_full(user_id: int, data: UserFullUpdate) -> Optional[User]:
     with get_connection() as connection:
         existing = connection.execute(
-            "SELECT username, temp_password FROM users WHERE id = ?", (user_id,)
+            "SELECT username, temp_password, email FROM users WHERE id = ?", (user_id,)
         ).fetchone()
         if existing is None:
             return None
@@ -147,15 +156,26 @@ def update_user_full(user_id: int, data: UserFullUpdate) -> Optional[User]:
             )
         if data.password is not None:
             new_temp_password = data.password
+        reset_email_status = (
+            data.email != existing["email"]
+            or new_username != existing["username"]
+            or data.password is not None
+        )
         connection.execute(
             """UPDATE users SET name = ?, designation = ?, region = ?, specialization = ?,
                 email = ?, phone = ?, experience_years = ?, bio = ?, qualifications = ?,
-                username = ?, temp_password = ?
+                username = ?, temp_password = ?,
+                credentials_email_sent_at = CASE WHEN ? THEN NULL ELSE credentials_email_sent_at END,
+                credentials_email_claimed_at = CASE WHEN ? THEN NULL ELSE credentials_email_claimed_at END,
+                credentials_email_attempts = CASE WHEN ? THEN 0 ELSE credentials_email_attempts END,
+                credentials_email_last_error = CASE WHEN ? THEN NULL ELSE credentials_email_last_error END
             WHERE id = ?""",
             (
                 data.name, data.designation, data.region, data.specialization,
                 data.email, data.phone, data.experience_years, data.bio,
-                data.qualifications, new_username, new_temp_password, user_id,
+                data.qualifications, new_username, new_temp_password,
+                reset_email_status, reset_email_status, reset_email_status,
+                reset_email_status, user_id,
             ),
         )
         if old_username_to_delete:

@@ -106,6 +106,10 @@ class User(BaseModel):
     qualifications: str = ""
     active: bool = True
     status: Optional[str] = None
+    email_sent: bool = False
+    email_sending: bool = False
+    email_attempts: int = 0
+    email_error: Optional[str] = None
 
     @field_validator("specialization", "email", "phone", "bio", "department_unit", "jurisdiction", "qualifications", mode="before")
     @classmethod

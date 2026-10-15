@@ -28,6 +28,9 @@ unchanged and continues to use SQLite for local development.
    - `ALLOWED_ORIGINS`: the exact origin of the deployed frontend, including
      `https://` and no trailing slash, for example `https://example.onrender.com`.
      If multiple frontends call the API, comma-separate their origins.
+   - `RESEND_API_KEY` and `RESEND_FROM_EMAIL`: Resend API key and a sender
+     address on a domain verified with Resend. `RESEND_FROM_NAME` defaults to
+     `Satark Drishti`.
 5. Wait for the service health check at `/api/health` to pass. The API's
    generated `API_ACCESS_TOKEN` is in the service's Environment settings. Keep
    it secret. The local Vite development proxy uses it server-side. The mobile
@@ -40,21 +43,69 @@ unchanged and continues to use SQLite for local development.
 Render uses the repository root and `requirements.txt` to install dependencies,
 then starts Uvicorn on Render's assigned `$PORT`.
 
+### Test the local Authority frontend against the Render API
+
+The Authority frontend's Vite development server proxies `/api` requests to
+`API_PROXY_TARGET` and adds `API_ACCESS_TOKEN` server-side. In the frontend
+repository's `.env.local`, set `API_PROXY_TARGET` to the Render API origin and
+`API_ACCESS_TOKEN` to the matching value from Render's Environment settings.
+Keep `VITE_API_BASE_URL=http://127.0.0.1:5173` so browser requests go through
+the local proxy. Do not put the API access token in a `VITE_` variable or
+frontend source. This proxy setup does not require adding the localhost origin
+to Render's `ALLOWED_ORIGINS`; the browser talks to the local Vite origin and
+the server-side proxy talks to Render.
+
 ## Local PostgreSQL run
 
 Create a PostgreSQL database, copy `.env.example` to `.env`, and set
-`DATABASE_URL` to its connection URL. Install and run from this folder:
+`DATABASE_URL` to its connection URL. Install dependencies once:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload
 ```
+
+Then start the local backend from this folder with:
+
+```powershell
+.\start-backend.ps1
+```
+
+The launcher uses the backend's `.venv` and starts Uvicorn at
+`http://127.0.0.1:8000`.
 
 The database schema is created on the first startup. Local demo accounts and
 fictional sample data are seeded automatically. The first registered records
 and inspection evidence uploaded after deployment are persisted in PostgreSQL.
+
+## Inspector verification emails
+
+When an Authority Officer marks an inspector as `Verified` through
+`PUT /api/users/{user_id}/status`, the API emails the inspector's assigned
+username and temporary password using Resend. Assign the inspector's email and
+credentials before verification. Set `RESEND_API_KEY` and `RESEND_FROM_EMAIL`
+in the backend environment; the sender address must belong to a domain verified
+in Resend. `RESEND_FROM_NAME` is optional and defaults to `Satark Drishti`.
+
+Verified inspectors' credentials email status is returned with each user as
+`email_sent`, `email_sending`, `email_attempts`, and `email_error`. The
+Authority Officers' **Send mail** action can call
+`POST /api/users/{user_id}/credentials-email`. It safely skips already-sent
+messages and reports provider failures. The backend also checks for unsent
+verified inspectors at startup and every 15 minutes. Database claims prevent
+multiple backend workers from sending the same email at the same time.
+
+If Resend is unavailable or not configured, the inspector remains marked as
+verified and the API reports that email delivery failed. Repeating the
+verification action, clicking **Send mail**, or the scheduled retry makes
+another attempt. When an inspector's email address, username, or password is
+updated, the sent state resets so the new credentials can be delivered. The
+email includes the temporary password, so use a strong Resend account/API key,
+restrict access to the provider account, and instruct inspectors to change the
+password immediately after signing in. Email is not an ideal channel for
+passwords; a one-time password-setup link should replace this flow before
+production use.
 
 ## Import the local SQLite snapshot
 
