@@ -8,6 +8,23 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+def _provider_error_message(error: HTTPError) -> str:
+    try:
+        body = json.loads(error.read(4096).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        body = None
+
+    if isinstance(body, dict):
+        name = body.get("name")
+        message = body.get("message")
+        if isinstance(message, str) and message.strip():
+            provider_detail = message.strip()[:300]
+            if isinstance(name, str) and name.strip():
+                provider_detail = f"{name.strip()}: {provider_detail}"
+            return f"Resend rejected the email (HTTP {error.code}): {provider_detail}"
+    return f"Resend rejected the email (HTTP {error.code})."
+
+
 class EmailDeliveryError(RuntimeError):
     """An email could not be accepted by the configured provider."""
 
@@ -105,6 +122,6 @@ def send_inspector_credentials_email(
             if response.status < 200 or response.status >= 300:
                 raise EmailDeliveryError("Resend did not accept the email.")
     except HTTPError as error:
-        raise EmailDeliveryError("Resend did not accept the email.") from error
+        raise EmailDeliveryError(_provider_error_message(error)) from error
     except (OSError, URLError, TimeoutError) as error:
         raise EmailDeliveryError("Could not connect to Resend to send the email.") from error

@@ -1,6 +1,8 @@
 import json
 import os
 import unittest
+from io import BytesIO
+from urllib.error import HTTPError
 from unittest.mock import Mock, patch
 
 from app.services.email.resend import (
@@ -53,6 +55,37 @@ class ResendEmailServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertIn("RESEND_API_KEY", str(raised.exception))
+
+    def test_resend_rejection_includes_provider_reason_without_exposing_key(self):
+        response_body = json.dumps({
+            "name": "validation_error",
+            "message": "You can only send testing emails to your own email address.",
+        }).encode("utf-8")
+        error = HTTPError(
+            "https://api.resend.com/emails",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(response_body),
+        )
+        with patch.dict(os.environ, {
+            "RESEND_API_KEY": "test-api-key",
+            "RESEND_FROM_EMAIL": "onboarding@resend.dev",
+        }), patch(
+            "app.services.email.resend.urlopen",
+            side_effect=error,
+        ):
+            with self.assertRaises(EmailDeliveryError) as raised:
+                send_inspector_credentials_email(
+                    "inspector@example.com",
+                    "Priya Sharma",
+                    "priya.sharma",
+                    "TempPass123",
+                )
+
+        self.assertIn("HTTP 403", str(raised.exception))
+        self.assertIn("own email address", str(raised.exception))
+        self.assertNotIn("test-api-key", str(raised.exception))
 
 
 if __name__ == "__main__":
