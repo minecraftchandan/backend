@@ -92,20 +92,19 @@ Verified inspectors' credentials email status is returned with each user as
 `email_sent`, `email_sending`, `email_attempts`, and `email_error`. The
 Authority Officers' **Send mail** action can call
 `POST /api/users/{user_id}/credentials-email`. It safely skips already-sent
-messages and reports provider failures. The backend also checks for unsent
-verified inspectors at startup and every 15 minutes. Database claims prevent
-multiple backend workers from sending the same email at the same time.
+messages and reports provider failures. Email is sent only when verification
+triggers it or an Authority Officer manually requests **Send mail**. Database
+claims prevent simultaneous manual requests from sending the same email twice.
 
 If Resend is unavailable or not configured, the inspector remains marked as
 verified and the API reports that email delivery failed. Repeating the
-verification action, clicking **Send mail**, or the scheduled retry makes
-another attempt. When an inspector's email address, username, or password is
-updated, the sent state resets so the new credentials can be delivered. The
-email includes the temporary password, so use a strong Resend account/API key,
-restrict access to the provider account, and instruct inspectors to change the
-password immediately after signing in. Email is not an ideal channel for
-passwords; a one-time password-setup link should replace this flow before
-production use.
+verification action or clicking **Send mail** makes another attempt. When an
+inspector's email address, username, or password is updated, the sent state
+resets so the new credentials can be delivered manually. The email includes
+the temporary password, so use a strong Resend account/API key, restrict
+access to the provider account, and instruct inspectors to change the password
+immediately after signing in. Email is not an ideal channel for passwords; a
+one-time password-setup link should replace this flow before production use.
 
 ## Import the local SQLite snapshot
 

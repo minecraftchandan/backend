@@ -8,7 +8,6 @@ FastAPI application entry point. Run with:
 Swagger docs are available at /docs once the server is running.
 """
 
-import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -22,7 +21,6 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.inspection_requests import public_router as public_inspection_requests_router
 from app.api.routes.users import public_router as public_users_router
 from app.database import initialize_database
-from app.services.email.worker import run_email_delivery_worker
 
 load_dotenv()  # loads variables from a local .env file, if present
 app_environment = os.getenv("APP_ENV", "development").strip().lower()
@@ -31,13 +29,7 @@ app_environment = os.getenv("APP_ENV", "development").strip().lower()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_database()
-    email_worker = asyncio.create_task(run_email_delivery_worker())
     yield
-    email_worker.cancel()
-    try:
-        await email_worker
-    except asyncio.CancelledError:
-        pass
 
 app = FastAPI(
     title="Satark Drishti — Backend",

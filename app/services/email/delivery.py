@@ -1,11 +1,7 @@
 """Claim, send, and persist inspector credential email delivery."""
 
-import logging
-
 from app.database import get_connection
 from app.services.email.resend import EmailDeliveryError, send_inspector_credentials_email
-
-logger = logging.getLogger(__name__)
 
 
 def deliver_inspector_credentials_email(user_id: int) -> bool:
@@ -98,27 +94,3 @@ def deliver_inspector_credentials_email(user_id: int) -> bool:
                 status_code=409,
             )
     return True
-
-
-def process_unsent_verified_inspector_emails() -> None:
-    """Retry eligible unsent verified inspector emails once per worker pass."""
-    with get_connection() as connection:
-        rows = connection.execute(
-            """SELECT id FROM users
-            WHERE status = 'Verified'
-                AND email <> ''
-                AND username IS NOT NULL
-                AND temp_password IS NOT NULL
-                AND credentials_email_sent_at IS NULL
-            ORDER BY id"""
-        ).fetchall()
-
-    for row in rows:
-        try:
-            deliver_inspector_credentials_email(row["id"])
-        except EmailDeliveryError as error:
-            logger.warning(
-                "Inspector credential email attempt failed for user %s: %s",
-                row["id"],
-                error,
-            )
